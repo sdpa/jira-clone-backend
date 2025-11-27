@@ -1,0 +1,1295 @@
+openapi: 3.0.3
+info:
+  title: JIRA Clone API
+  description: |
+    A comprehensive API for managing projects, issues, and users in a JIRA-like application.
+    
+    ## Features
+    - Project management with team collaboration
+    - Issue tracking with Kanban-style workflow
+    - Real-time updates and notifications
+    
+  version: 1.0.0
+  contact:
+    name: JIRA Clone Team
+    email: support@jira-clone.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:5000/api
+    description: Development serverxs
+
+paths:
+  # Health Check
+  /health:
+    get:
+      operationId: healthCheck
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns the current status of the API server
+      security: []
+      responses:
+        '200':
+          description: API is running successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "JIRA Clone API is running"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2024-01-15T10:30:00.000Z"
+
+  # Project Endpoints
+  /projects:
+    get:
+      operationId: getUserProjects
+      tags:
+        - Projects
+      summary: Get user's projects
+      description: Returns all projects where the user is either owner or member
+      responses:
+        '200':
+          description: Projects retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      projects:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Project'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      operationId: createProject
+      tags:
+        - Projects
+      summary: Create a new project
+      description: Creates a new project with the authenticated user as owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+            examples:
+              basic_project:
+                summary: Basic project creation
+                value:
+                  name: "My Awesome Project"
+                  description: "A project for building amazing features"
+                  key: "MAP"
+              auto_key_project:
+                summary: Project with auto-generated key
+                value:
+                  name: "Web Application"
+                  description: "Frontend and backend development"
+      responses:
+        '201':
+          description: Project created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      project:
+                        $ref: '#/components/schemas/Project'
+        '400':
+          description: Validation error or duplicate project key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Issue Endpoints
+  /issues:
+    get:
+      operationId: getIssues
+      tags:
+        - Issues
+      summary: Get issues with filtering
+      description: Returns issues with optional filtering by project, status, or assignee
+      parameters:
+        - name: projectId
+          in: query
+          description: Filter by project ID
+          required: false
+          schema:
+            type: string
+            format: objectId
+        - name: status
+          in: query
+          description: Filter by issue status
+          required: false
+          schema:
+            type: string
+            enum: [todo, in_progress, in_review, done, blocked, cancelled]
+        - name: assignee
+          in: query
+          description: Filter by assignee user ID
+          required: false
+          schema:
+            type: string
+            format: objectId
+      responses:
+        '200':
+          description: Issues retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      issues:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Issue'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      operationId: createIssue
+      tags:
+        - Issues
+      summary: Create a new issue
+      description: Creates a new issue in the specified project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIssueRequest'
+            examples:
+              basic_issue:
+                summary: Basic issue creation
+                value:
+                  projectId: "507f1f77bcf86cd799439011"
+                  title: "Fix login bug"
+                  description: "Users cannot login with valid credentials"
+                  type: "bug"
+                  priority: "high"
+                  assignee: "507f1f77bcf86cd799439012"
+              minimal_issue:
+                summary: Minimal issue creation
+                value:
+                  projectId: "507f1f77bcf86cd799439011"
+                  title: "Update documentation"
+      responses:
+        '201':
+          description: Issue created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      issue:
+                        $ref: '#/components/schemas/Issue'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /issues/{id}:
+    put:
+      operationId: updateIssue
+      tags:
+        - Issues
+      summary: Update an issue
+      description: Updates an existing issue with the provided data
+      parameters:
+        - name: id
+          in: path
+          description: Issue ID
+          required: true
+          schema:
+            type: string
+            format: objectId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateIssueRequest'
+            examples:
+              status_update:
+                summary: Update issue status
+                value:
+                  status: "in_progress"
+              assignee_update:
+                summary: Update assignee
+                value:
+                  assignee: "507f1f77bcf86cd799439012"
+              multiple_updates:
+                summary: Multiple field updates
+                value:
+                  title: "Updated issue title"
+                  description: "Updated description"
+                  priority: "high"
+                  status: "done"
+      responses:
+        '200':
+          description: Issue updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      issue:
+                        $ref: '#/components/schemas/Issue'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Comments
+  /comments/issues/{issueId}/comments:
+    get:
+      operationId: getIssueComments
+      tags:
+        - Comments
+      summary: Get comments for an issue
+      description: Returns all comments for a specific issue with pagination support
+      parameters:
+        - name: issueId
+          in: path
+          description: Issue ID
+          required: true
+          schema:
+            type: string
+            format: objectId
+        - name: page
+          in: query
+          description: Page number for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of comments per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: sortBy
+          in: query
+          description: Field to sort by
+          required: false
+          schema:
+            type: string
+            enum: [createdAt, updatedAt]
+            default: createdAt
+        - name: sortOrder
+          in: query
+          description: Sort order
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        '200':
+          description: Comments retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      comments:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Comment'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Access denied to issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: createComment
+      tags:
+        - Comments
+      summary: Create a new comment
+      description: Creates a new comment for the specified issue
+      parameters:
+        - name: issueId
+          in: path
+          description: Issue ID
+          required: true
+          schema:
+            type: string
+            format: objectId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - content
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+                  description: Comment content
+                  example: "This is a comment on the issue"
+      responses:
+        '201':
+          description: Comment created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      comment:
+                        $ref: '#/components/schemas/Comment'
+                  message:
+                    type: string
+                    example: "Comment created successfully"
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Access denied to issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /comments/{id}:
+    get:
+      operationId: getComment
+      tags:
+        - Comments
+      summary: Get a specific comment
+      description: Returns details of a specific comment
+      parameters:
+        - name: id
+          in: path
+          description: Comment ID
+          required: true
+          schema:
+            type: string
+            format: objectId
+      responses:
+        '200':
+          description: Comment retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      comment:
+                        $ref: '#/components/schemas/Comment'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Access denied to comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateComment
+      tags:
+        - Comments
+      summary: Update a comment
+      description: Updates the content of a comment (author only)
+      parameters:
+        - name: id
+          in: path
+          description: Comment ID
+          required: true
+          schema:
+            type: string
+            format: objectId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - content
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+                  description: Updated comment content
+                  example: "This comment has been updated"
+      responses:
+        '200':
+          description: Comment updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      comment:
+                        $ref: '#/components/schemas/Comment'
+                  message:
+                    type: string
+                    example: "Comment updated successfully"
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Can only edit your own comments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: deleteComment
+      tags:
+        - Comments
+      summary: Delete a comment
+      description: Deletes a comment (author or admin only)
+      parameters:
+        - name: id
+          in: path
+          description: Comment ID
+          required: true
+          schema:
+            type: string
+            format: objectId
+      responses:
+        '200':
+          description: Comment deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Comment deleted successfully"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Can only delete your own comments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /comments/issues/{issueId}/comments/stats:
+    get:
+      operationId: getCommentStats
+      tags:
+        - Comments
+      summary: Get comment statistics for an issue
+      description: Returns statistics about comments for a specific issue
+      parameters:
+        - name: issueId
+          in: path
+          description: Issue ID
+          required: true
+          schema:
+            type: string
+            format: objectId
+      responses:
+        '200':
+          description: Comment statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      stats:
+                        $ref: '#/components/schemas/CommentStats'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Access denied to issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /comments/author/{authorId}:
+    get:
+      operationId: getCommentsByAuthor
+      tags:
+        - Comments
+      summary: Get comments by author
+      description: Returns all comments created by a specific author with pagination
+      parameters:
+        - name: authorId
+          in: path
+          description: Author user ID
+          required: true
+          schema:
+            type: string
+            format: objectId
+        - name: page
+          in: query
+          description: Page number for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of comments per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: sortBy
+          in: query
+          description: Field to sort by
+          required: false
+          schema:
+            type: string
+            enum: [createdAt, updatedAt]
+            default: createdAt
+        - name: sortOrder
+          in: query
+          description: Sort order
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Comments retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      comments:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Comment'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from login or registration
+
+  schemas:
+    # Authentication Schemas
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - firstName
+        - lastName
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john.doe@example.com"
+        password:
+          type: string
+          minLength: 6
+          description: User's password (minimum 6 characters)
+          example: "securePassword123"
+        firstName:
+          type: string
+          minLength: 1
+          description: User's first name
+          example: "John"
+        lastName:
+          type: string
+          minLength: 1
+          description: User's last name
+          example: "Doe"
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john.doe@example.com"
+        password:
+          type: string
+          description: User's password
+          example: "securePassword123"
+
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+            token:
+              type: string
+              description: JWT authentication token
+              example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    # User Schema
+    User:
+      type: object
+      properties:
+        _id:
+          type: string
+          format: objectId
+          description: Unique user identifier
+          example: "507f1f77bcf86cd799439011"
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john.doe@example.com"
+        firstName:
+          type: string
+          description: User's first name
+          example: "John"
+        lastName:
+          type: string
+          description: User's last name
+          example: "Doe"
+        role:
+          type: string
+          enum: [admin, project_manager, developer, designer, qa, viewer]
+          default: viewer
+          description: User's role in the system
+          example: "developer"
+        isActive:
+          type: boolean
+          default: true
+          description: Whether the user account is active
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+          example: "2024-01-15T10:30:00.000Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2024-01-15T10:30:00.000Z"
+
+    # Project Schemas
+    CreateProjectRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Project name
+          example: "My Awesome Project"
+        description:
+          type: string
+          maxLength: 500
+          description: Project description
+          example: "A project for building amazing features"
+        key:
+          type: string
+          maxLength: 10
+          pattern: '^[A-Z]+$'
+          description: Project key (auto-generated if not provided)
+          example: "MAP"
+
+    Project:
+      type: object
+      properties:
+        _id:
+          type: string
+          format: objectId
+          description: Unique project identifier
+          example: "507f1f77bcf86cd799439011"
+        name:
+          type: string
+          description: Project name
+          example: "My Awesome Project"
+        description:
+          type: string
+          description: Project description
+          example: "A project for building amazing features"
+        key:
+          type: string
+          description: Unique project key
+          example: "MAP"
+        owner:
+          $ref: '#/components/schemas/User'
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+          description: Project team members
+        isActive:
+          type: boolean
+          default: true
+          description: Whether the project is active
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          description: Project creation timestamp
+          example: "2024-01-15T10:30:00.000Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2024-01-15T10:30:00.000Z"
+
+    # Issue Schemas
+    CreateIssueRequest:
+      type: object
+      required:
+        - projectId
+        - title
+      properties:
+        projectId:
+          type: string
+          format: objectId
+          description: ID of the project this issue belongs to
+          example: "507f1f77bcf86cd799439011"
+        title:
+          type: string
+          minLength: 3
+          maxLength: 200
+          description: Issue title
+          example: "Fix login bug"
+        description:
+          type: string
+          maxLength: 2000
+          description: Detailed issue description
+          example: "Users cannot login with valid credentials. The login form shows an error even with correct email and password."
+        type:
+          type: string
+          enum: [task, bug, story, epic, subtask]
+          default: task
+          description: Type of issue
+          example: "bug"
+        priority:
+          type: string
+          enum: [lowest, low, medium, high, highest]
+          default: medium
+          description: Issue priority level
+          example: "high"
+        assignee:
+          type: string
+          format: objectId
+          description: ID of the user assigned to this issue (optional)
+          example: "507f1f77bcf86cd799439012"
+
+    UpdateIssueRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 200
+          description: Issue title
+          example: "Updated issue title"
+        description:
+          type: string
+          maxLength: 2000
+          description: Detailed issue description
+          example: "Updated description with more details"
+        type:
+          type: string
+          enum: [task, bug, story, epic, subtask]
+          description: Type of issue
+          example: "bug"
+        priority:
+          type: string
+          enum: [lowest, low, medium, high, highest]
+          description: Issue priority level
+          example: "high"
+        status:
+          type: string
+          enum: [todo, in_progress, in_review, done, blocked, cancelled]
+          description: Current status of the issue
+          example: "in_progress"
+        assignee:
+          type: string
+          format: objectId
+          description: ID of the user assigned to this issue (null to unassign)
+          example: "507f1f77bcf86cd799439012"
+
+    Issue:
+      type: object
+      properties:
+        _id:
+          type: string
+          format: objectId
+          description: Unique issue identifier
+          example: "507f1f77bcf86cd799439011"
+        projectId:
+          oneOf:
+            - type: string
+              format: objectId
+            - $ref: '#/components/schemas/Project'
+          description: Project this issue belongs to
+          example: "507f1f77bcf86cd799439011"
+        key:
+          type: string
+          description: Unique issue key (auto-generated)
+          example: "MAP-1"
+        title:
+          type: string
+          description: Issue title
+          example: "Fix login bug"
+        description:
+          type: string
+          description: Detailed issue description
+          example: "Users cannot login with valid credentials"
+        type:
+          type: string
+          enum: [task, bug, story, epic, subtask]
+          description: Type of issue
+          example: "bug"
+        priority:
+          type: string
+          enum: [lowest, low, medium, high, highest]
+          description: Issue priority level
+          example: "high"
+        status:
+          type: string
+          enum: [todo, in_progress, in_review, done, blocked, cancelled]
+          default: todo
+          description: Current status of the issue
+          example: "todo"
+        assignee:
+          oneOf:
+            - type: string
+              format: objectId
+            - $ref: '#/components/schemas/User'
+            - type: "null"
+          description: User assigned to this issue
+          example: "507f1f77bcf86cd799439012"
+        reporter:
+          oneOf:
+            - type: string
+              format: objectId
+            - $ref: '#/components/schemas/User'
+          description: User who created this issue
+          example: "507f1f77bcf86cd799439013"
+        labels:
+          type: array
+          items:
+            type: string
+          description: Issue labels for categorization
+          example: ["frontend", "bug", "urgent"]
+        components:
+          type: array
+          items:
+            type: string
+          description: System components affected by this issue
+          example: ["authentication", "ui"]
+        dueDate:
+          type: string
+          format: date-time
+          description: Due date for this issue
+          example: "2024-02-15T23:59:59.000Z"
+        estimatedHours:
+          type: number
+          minimum: 0
+          description: Estimated hours to complete this issue
+          example: 8.5
+        loggedHours:
+          type: number
+          minimum: 0
+          default: 0
+          description: Hours already logged on this issue
+          example: 2.5
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+          description: Comments on this issue
+        watchers:
+          type: array
+          items:
+            oneOf:
+              - type: string
+                format: objectId
+              - $ref: '#/components/schemas/User'
+          description: Users watching this issue
+        createdAt:
+          type: string
+          format: date-time
+          description: Issue creation timestamp
+          example: "2024-01-15T10:30:00.000Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2024-01-15T10:30:00.000Z"
+
+    # Comment Schema
+    Comment:
+      type: object
+      properties:
+        _id:
+          type: string
+          format: objectId
+          description: Unique comment identifier
+          example: "507f1f77bcf86cd799439011"
+        issueId:
+          type: string
+          format: objectId
+          description: ID of the issue this comment belongs to
+          example: "507f1f77bcf86cd799439010"
+        author:
+          oneOf:
+            - type: string
+              format: objectId
+            - $ref: '#/components/schemas/User'
+          description: User who wrote this comment
+          example: "507f1f77bcf86cd799439012"
+        content:
+          type: string
+          description: Comment content
+          example: "This issue has been resolved in the latest deployment."
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+          description: Attachments associated with this comment
+        createdAt:
+          type: string
+          format: date-time
+          description: Comment creation timestamp
+          example: "2024-01-15T10:30:00.000Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Comment last update timestamp
+          example: "2024-01-15T11:30:00.000Z"
+
+    # Comment Statistics Schema
+    CommentStats:
+      type: object
+      properties:
+        totalComments:
+          type: integer
+          description: Total number of comments for the issue
+          example: 15
+        totalAttachments:
+          type: integer
+          description: Total number of attachments across all comments
+          example: 3
+        uniqueAuthors:
+          type: integer
+          description: Number of unique authors who have commented
+          example: 5
+
+    # Error Schema
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: Error message
+          example: "User already exists"
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Authentication
+    description: User authentication and authorization
+  - name: Projects
+    description: Project management operations
+  - name: Issues
+    description: Issue tracking and management
+  - name: Comments
+    description: Comment management and operations
