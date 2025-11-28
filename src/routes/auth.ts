@@ -4,6 +4,7 @@ import { User } from '../models/User';
 import { generateToken, authenticate } from '../middleware/auth';
 import { ApiResponse, IUser } from '../types';
 import { Request as ExpressRequest } from 'express';
+import { verifyGoogleToken } from '../utils/googleAuth';
 
 const router = express.Router();
 
@@ -18,6 +19,10 @@ const registerSchema = Joi.object({
 const loginSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().required()
+});
+
+const googleLoginSchema = Joi.object({
+  idToken: Joi.string().required()
 });
 
 const updateProfileSchema = Joi.object({
@@ -64,9 +69,9 @@ router.post('/register', async (req, res) => {
     await user.save();
 
     // Generate token
-    const token = generateToken(user);
+    const token = generateToken(user as any);
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: {
         user: user.toJSON(),
@@ -76,7 +81,7 @@ router.post('/register', async (req, res) => {
     } as ApiResponse);
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -126,9 +131,9 @@ router.post('/login', async (req, res) => {
     await user.updateLastLogin();
 
     // Generate token
-    const token = generateToken(user);
+    const token = generateToken(user as any);
 
-    res.json({
+    return res.json({
       success: true,
       data: {
         user: user.toJSON(),
@@ -138,7 +143,76 @@ router.post('/login', async (req, res) => {
     } as ApiResponse);
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    } as ApiResponse);
+  }
+});
+
+// Google OAuth login
+router.post('/google', async (req, res) => {
+  try {
+    const { error, value } = googleLoginSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        error: error.details[0].message
+      } as ApiResponse);
+    }
+
+    const { idToken } = value;
+
+    // Verify Google ID token
+    let googleUser;
+    try {
+      googleUser = await verifyGoogleToken(idToken);
+    } catch (tokenError) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid Google token'
+      } as ApiResponse);
+    }
+
+    // Check if user exists
+    let user = await User.findOne({ email: googleUser.email });
+
+    if (user) {
+      // Update user info from Google if they exist
+      user.firstName = googleUser.given_name || googleUser.name.split(' ')[0] || user.firstName;
+      user.lastName = googleUser.family_name || googleUser.name.split(' ').slice(1).join(' ') || user.lastName;
+      user.avatar = googleUser.picture || user.avatar;
+      
+      // Update last login
+      await user.updateLastLogin();
+    } else {
+      // Create new user from Google data
+      user = new User({
+        email: googleUser.email,
+        password: Math.random().toString(36).slice(-12), // Random password for Google users
+        firstName: googleUser.given_name || googleUser.name.split(' ')[0] || 'User',
+        lastName: googleUser.family_name || googleUser.name.split(' ').slice(1).join(' ') || '',
+        avatar: googleUser.picture,
+        isActive: true
+      });
+
+      await user.save();
+    }
+
+    // Generate JWT token
+    const token = generateToken(user as any);
+
+    return res.json({
+      success: true,
+      data: {
+        user: user.toJSON(),
+        token
+      },
+      message: 'Google login successful'
+    } as ApiResponse);
+  } catch (error) {
+    console.error('Google login error:', error);
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -180,14 +254,14 @@ router.put('/profile', authenticate, async (req: ExpressRequest & { user?: IUser
       { new: true, runValidators: true }
     );
 
-    res.json({
+    return res.json({
       success: true,
       data: { user: user!.toJSON() },
       message: 'Profile updated successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Update profile error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -229,13 +303,13 @@ router.put('/change-password', authenticate, async (req: ExpressRequest & { user
     user.password = newPassword;
     await user.save();
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Password changed successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Change password error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);

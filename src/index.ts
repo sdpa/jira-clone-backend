@@ -1,3 +1,8 @@
+import dotenv from 'dotenv';
+
+// Load environment variables FIRST - before any other imports that might use them
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -6,7 +11,6 @@ import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -16,9 +20,6 @@ import commentRoutes from './routes/comments';
 
 // Import middleware
 import { authenticate } from './middleware/auth';
-
-// Load environment variables
-dotenv.config();
 
 const app = express();
 const server = createServer(app);
@@ -60,6 +61,24 @@ app.get('/api/health', (req, res) => {
     message: 'JIRA Clone API is running',
     timestamp: new Date().toISOString(),
     version: '1.0.0'
+  });
+});
+
+// Environment check endpoint (for debugging)
+app.get('/api/env-check', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      nodeEnv: process.env.NODE_ENV || 'not set',
+      port: process.env.PORT || 'not set',
+      hasMongoUri: !!process.env.MONGODB_URI,
+      hasJwtSecret: !!process.env.JWT_SECRET,
+      hasGoogleClientId: !!process.env.GOOGLE_CLIENT_ID,
+      googleClientIdLength: (process.env.GOOGLE_CLIENT_ID || '').length,
+      googleClientIdPreview: process.env.GOOGLE_CLIENT_ID 
+        ? `${process.env.GOOGLE_CLIENT_ID.substring(0, 20)}...` 
+        : 'NOT SET'
+    }
   });
 });
 

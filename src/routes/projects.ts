@@ -37,13 +37,13 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
       .populate('members', 'firstName lastName email avatar')
       .sort({ updatedAt: -1 });
 
-    res.json({
+    return res.json({
       success: true,
       data: { projects }
     } as ApiResponse);
   } catch (error) {
     console.error('Get projects error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -64,13 +64,13 @@ router.get('/:id', authenticate, authorizeProjectMember((req) => req.params.id),
       } as ApiResponse);
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: { project }
     } as ApiResponse);
   } catch (error) {
     console.error('Get project error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -116,14 +116,14 @@ router.post('/', authenticate, authorize(UserRole.ADMIN, UserRole.PROJECT_MANAGE
       .populate('owner', 'firstName lastName email avatar')
       .populate('members', 'firstName lastName email avatar');
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: { project: populatedProject },
       message: 'Project created successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Create project error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -156,14 +156,14 @@ router.put('/:id', authenticate, authorizeProjectMember((req) => req.params.id),
       } as ApiResponse);
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: { project },
       message: 'Project updated successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Update project error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -186,13 +186,13 @@ router.delete('/:id', authenticate, authorize(UserRole.ADMIN), async (req: Authe
     project.isActive = false;
     await project.save();
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Project deleted successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Delete project error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -234,14 +234,14 @@ router.post('/:id/members', authenticate, authorizeProjectMember((req) => req.pa
       .populate('owner', 'firstName lastName email avatar')
       .populate('members', 'firstName lastName email avatar');
 
-    res.json({
+    return res.json({
       success: true,
       data: { project: updatedProject },
       message: 'Member added successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Add member error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -283,14 +283,14 @@ router.delete('/:id/members/:userId', authenticate, authorizeProjectMember((req)
       .populate('owner', 'firstName lastName email avatar')
       .populate('members', 'firstName lastName email avatar');
 
-    res.json({
+    return res.json({
       success: true,
       data: { project: updatedProject },
       message: 'Member removed successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Remove member error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -303,13 +303,13 @@ router.get('/:id/stats', authenticate, authorizeProjectMember((req) => req.param
     const { Issue } = await import('../models/Issue');
     const stats = await Issue.getStatistics(req.params.id);
 
-    res.json({
+    return res.json({
       success: true,
       data: { stats }
     } as ApiResponse);
   } catch (error) {
     console.error('Get project stats error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);

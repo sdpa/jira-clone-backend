@@ -1,5 +1,17 @@
-import mongoose, { Schema } from 'mongoose';
-import { IComment, ICommentModel, Attachment } from '../types';
+import mongoose, { Schema, Document } from 'mongoose';
+import { ICommentModel, Attachment } from '../types';
+
+interface ICommentDocument extends Document {
+  issueId: string;
+  author: string;
+  content: string;
+  attachments: Attachment[];
+  createdAt: Date;
+  updatedAt: Date;
+  updateContent(content: string): Promise<ICommentDocument>;
+  addAttachment(attachment: Attachment): Promise<ICommentDocument>;
+  removeAttachment(attachmentId: string): Promise<ICommentDocument>;
+}
 
 const attachmentSchema = new Schema<Attachment>({
   filename: { type: String, required: true },
@@ -11,7 +23,7 @@ const attachmentSchema = new Schema<Attachment>({
   uploadedAt: { type: Date, default: Date.now }
 }, { _id: true });
 
-const commentSchema = new Schema<IComment>({
+const commentSchema = new Schema<ICommentDocument>({
   issueId: {
     type: String,
     required: true,
@@ -109,4 +121,4 @@ commentSchema.statics.getCommentStats = async function(issueId: string) {
   };
 };
 
-export const Comment = mongoose.model<IComment, ICommentModel>('Comment', commentSchema);
+export const Comment = mongoose.model<ICommentDocument>('Comment', commentSchema) as unknown as ICommentModel;

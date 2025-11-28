@@ -2,10 +2,10 @@ import { Document, Model } from 'mongoose';
 import { Request } from 'express';
 
 // User Types
-export interface IUser extends Document {
+export interface IUser {
   _id: string;
   email: string;
-  password: string;
+  password?: string;
   firstName: string;
   lastName: string;
   avatar?: string;
@@ -14,6 +14,7 @@ export interface IUser extends Document {
   lastLogin?: Date;
   createdAt: Date;
   updatedAt: Date;
+  toJSON(): any;
 }
 
 export enum UserRole {
@@ -26,7 +27,7 @@ export enum UserRole {
 }
 
 // Project Types
-export interface IProject extends Document {
+export interface IProject {
   _id: string;
   name: string;
   description?: string;
@@ -51,7 +52,7 @@ export interface ProjectSettings {
 }
 
 // Issue Types
-export interface IIssue extends Document {
+export interface IIssue {
   _id: string;
   projectId: string;
   key: string; // e.g., PROJ-123
@@ -116,7 +117,7 @@ export interface Comment {
   updatedAt: Date;
 }
 
-export interface IComment extends Document {
+export interface IComment {
   _id: string;
   issueId: string;
   author: string; // User ID
@@ -143,7 +144,7 @@ export interface Attachment {
 }
 
 // Board Types
-export interface IBoard extends Document {
+export interface IBoard {
   _id: string;
   projectId: string;
   name: string;
@@ -185,7 +186,7 @@ export interface BoardSettings {
 }
 
 // Sprint Types (for Scrum boards)
-export interface ISprint extends Document {
+export interface ISprint {
   _id: string;
   projectId: string;
   boardId: string;
@@ -265,19 +266,24 @@ export interface SocketEvent {
 }
 
 // Model interfaces with static methods
-export interface IProjectModel extends Model<IProject> {
+export interface IUserModel extends Model<any> {
+  findActiveUsers(): any;
+  findByRole(role: UserRole): any;
+}
+
+export interface IProjectModel extends Model<any> {
   findByUser(userId: string): any;
   generateUniqueKey(name: string): Promise<string>;
 }
 
-export interface IIssueModel extends Model<IIssue> {
+export interface IIssueModel extends Model<any> {
   generateUniqueKey(projectKey: string): Promise<string>;
   findByProject(projectId: string): any;
   findByAssignee(assigneeId: string): any;
   getStatistics(projectId: string): Promise<any>;
 }
 
-export interface ICommentModel extends Model<IComment> {
+export interface ICommentModel extends Model<any> {
   findByIssue(issueId: string): any;
   findByAuthor(authorId: string): any;
   getCommentStats(issueId: string): Promise<any>;

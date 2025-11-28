@@ -59,7 +59,7 @@ router.get('/issues/:issueId/comments', authenticate, async (req: AuthenticatedR
 
     const pages = Math.ceil(total / parseInt(limit));
 
-    res.json({
+    return res.json({
       success: true,
       data: { comments },
       pagination: {
@@ -71,7 +71,7 @@ router.get('/issues/:issueId/comments', authenticate, async (req: AuthenticatedR
     } as ApiResponse);
   } catch (error) {
     console.error('Get comments error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -109,13 +109,13 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: { comment }
     } as ApiResponse);
   } catch (error) {
     console.error('Get comment error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -168,14 +168,14 @@ router.post('/issues/:issueId/comments', authenticate, async (req: Authenticated
     const populatedComment = await Comment.findById(comment._id)
       .populate('author', 'firstName lastName email avatar');
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: { comment: populatedComment },
       message: 'Comment created successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Create comment error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -217,14 +217,14 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     const updatedComment = await Comment.findById(comment._id)
       .populate('author', 'firstName lastName email avatar');
 
-    res.json({
+    return res.json({
       success: true,
       data: { comment: updatedComment },
       message: 'Comment updated successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Update comment error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -256,13 +256,13 @@ router.delete('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
 
     await Comment.findByIdAndDelete(req.params.id);
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Comment deleted successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Delete comment error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -293,13 +293,13 @@ router.get('/issues/:issueId/comments/stats', authenticate, async (req: Authenti
 
     const stats = await Comment.getCommentStats(issueId);
 
-    res.json({
+    return res.json({
       success: true,
       data: { stats }
     } as ApiResponse);
   } catch (error) {
     console.error('Get comment stats error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -331,7 +331,7 @@ router.get('/author/:authorId', authenticate, async (req: AuthenticatedRequest, 
 
     const pages = Math.ceil(total / parseInt(limit));
 
-    res.json({
+    return res.json({
       success: true,
       data: { comments },
       pagination: {
@@ -343,7 +343,7 @@ router.get('/author/:authorId', authenticate, async (req: AuthenticatedRequest, 
     } as ApiResponse);
   } catch (error) {
     console.error('Get comments by author error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);

@@ -1,5 +1,33 @@
-import mongoose, { Schema } from 'mongoose';
-import { IIssue, IIssueModel, IssueType, Priority, Status, Attachment, Comment } from '../types';
+import mongoose, { Schema, Document } from 'mongoose';
+import { IIssueModel, IssueType, Priority, Status, Attachment, Comment } from '../types';
+
+interface IIssueDocument extends Document {
+  projectId: string;
+  key: string;
+  title: string;
+  description?: string;
+  type: IssueType;
+  priority: Priority;
+  status: Status;
+  assignee?: string;
+  reporter: string;
+  labels: string[];
+  components: string[];
+  fixVersion?: string;
+  dueDate?: Date;
+  estimatedHours?: number;
+  loggedHours: number;
+  attachments: Attachment[];
+  comments: Comment[];
+  watchers: string[];
+  createdAt: Date;
+  updatedAt: Date;
+  addComment(authorId: string, content: string, attachments?: Attachment[]): Promise<IIssueDocument>;
+  addWatcher(userId: string): Promise<IIssueDocument>;
+  removeWatcher(userId: string): Promise<IIssueDocument>;
+  logTime(hours: number): Promise<IIssueDocument>;
+  updateStatus(status: Status): Promise<IIssueDocument>;
+}
 
 const attachmentSchema = new Schema<Attachment>({
   filename: { type: String, required: true },
@@ -19,7 +47,7 @@ const commentSchema = new Schema<Comment>({
   updatedAt: { type: Date, default: Date.now }
 }, { _id: true });
 
-const issueSchema = new Schema<IIssue>({
+const issueSchema = new Schema<IIssueDocument>({
   projectId: {
     type: String,
     required: true,
@@ -276,4 +304,4 @@ issueSchema.statics.getStatistics = async function(projectId: string) {
   };
 };
 
-export const Issue = mongoose.model<IIssue, IIssueModel>('Issue', issueSchema);
+export const Issue = mongoose.model<IIssueDocument>('Issue', issueSchema) as unknown as IIssueModel;

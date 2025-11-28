@@ -4,8 +4,8 @@ import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
 import { IUser, AuthenticatedRequest } from '../types';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const JWT_SECRET = (process.env.JWT_SECRET || 'your-secret-key') as string;
+const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN || '7d') as string;
 
 export interface JWTPayload {
   userId: string;
@@ -21,7 +21,7 @@ export const generateToken = (user: IUser): string => {
     role: user.role
   };
   
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN as any });
 };
 
 // Verify JWT token
@@ -60,7 +60,7 @@ export const authenticate = async (
         return;
       }
       
-      req.user = user;
+      req.user = user as any;
       next();
     } catch (error) {
       res.status(401).json({
@@ -121,7 +121,7 @@ export const optionalAuth = async (
       const user = await User.findById(decoded.userId).select('-password');
       
       if (user && user.isActive) {
-        req.user = user;
+        req.user = user as any;
       }
     } catch (error) {
       // Ignore token errors for optional auth

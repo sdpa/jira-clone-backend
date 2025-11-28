@@ -1,5 +1,20 @@
-import mongoose, { Schema } from 'mongoose';
-import { IProject, IProjectModel, ProjectSettings, IssueType, Priority, Status } from '../types';
+import mongoose, { Schema, Document } from 'mongoose';
+import { IProjectModel, ProjectSettings, IssueType, Priority, Status } from '../types';
+
+interface IProjectDocument extends Document {
+  name: string;
+  description?: string;
+  key: string;
+  owner: string;
+  members: string[];
+  settings: ProjectSettings;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  addMember(userId: string): Promise<IProjectDocument>;
+  removeMember(userId: string): Promise<IProjectDocument>;
+  isMember(userId: string): boolean;
+}
 
 const projectSettingsSchema = new Schema<ProjectSettings>({
   defaultAssignee: {
@@ -23,7 +38,7 @@ const projectSettingsSchema = new Schema<ProjectSettings>({
   }]
 }, { _id: false });
 
-const projectSchema = new Schema<IProject>({
+const projectSchema = new Schema<IProjectDocument>({
   name: {
     type: String,
     required: true,
@@ -135,4 +150,4 @@ projectSchema.statics.generateUniqueKey = async function(name: string): Promise<
   return key;
 };
 
-export const Project = mongoose.model<IProject, IProjectModel>('Project', projectSchema);
+export const Project = mongoose.model<IProjectDocument>('Project', projectSchema) as unknown as IProjectModel;

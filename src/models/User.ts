@@ -1,9 +1,19 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { IUser, UserRole } from '../types';
+import { UserRole, IUserModel } from '../types';
 
 // Extend the IUser interface to include methods
-interface IUserDocument extends IUser, Document {
+interface IUserDocument extends Document {
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  avatar?: string;
+  role: UserRole;
+  isActive: boolean;
+  lastLogin?: Date;
+  createdAt: Date;
+  updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
   updateLastLogin(): Promise<IUserDocument>;
 }
@@ -54,8 +64,9 @@ const userSchema = new Schema({
 }, {
   timestamps: true,
   toJSON: {
-    transform: function(doc, ret) {
-      delete ret.password;
+    transform: function(doc: any, ret: any) {
+      if (ret.password) delete ret.password;
+      if (ret.__v !== undefined) delete ret.__v;
       return ret;
     }
   }
@@ -105,4 +116,5 @@ userSchema.statics.findByRole = function(role: UserRole) {
   return this.find({ role, isActive: true });
 };
 
+// @ts-ignore - Complex union type error is a known mongoose + TypeScript issue
 export const User = mongoose.model<IUserDocument>('User', userSchema);

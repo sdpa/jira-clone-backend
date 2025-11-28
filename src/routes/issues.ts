@@ -131,7 +131,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
 
     const pages = Math.ceil(total / parseInt(limit));
 
-    res.json({
+    return res.json({
       success: true,
       data: { issues },
       pagination: {
@@ -143,7 +143,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
     } as ApiResponse);
   } catch (error) {
     console.error('Get issues error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -176,13 +176,13 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: { issue }
     } as ApiResponse);
   } catch (error) {
     console.error('Get issue error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -236,14 +236,14 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res) => {
       .populate('reporter', 'firstName lastName email avatar')
       .populate('projectId', 'name key');
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: { issue: populatedIssue },
       message: 'Issue created successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Create issue error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -287,14 +287,14 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       .populate('reporter', 'firstName lastName email avatar')
       .populate('projectId', 'name key');
 
-    res.json({
+    return res.json({
       success: true,
       data: { issue: updatedIssue },
       message: 'Issue updated successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Update issue error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -323,13 +323,13 @@ router.delete('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
 
     await Issue.findByIdAndDelete(req.params.id);
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Issue deleted successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Delete issue error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -371,14 +371,14 @@ router.post('/:id/comments', authenticate, async (req: AuthenticatedRequest, res
     const updatedIssue = await Issue.findById(issue._id)
       .populate('comments.author', 'firstName lastName email avatar');
 
-    res.json({
+    return res.json({
       success: true,
       data: { issue: updatedIssue },
       message: 'Comment added successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Add comment error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -429,14 +429,14 @@ router.post('/:id/time', authenticate, async (req: AuthenticatedRequest, res) =>
       .populate('assignee', 'firstName lastName email avatar')
       .populate('reporter', 'firstName lastName email avatar');
 
-    res.json({
+    return res.json({
       success: true,
       data: { issue: updatedIssue },
       message: 'Time logged successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Log time error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -466,13 +466,13 @@ router.post('/:id/watchers', authenticate, async (req: AuthenticatedRequest, res
 
     await issue.addWatcher(req.user!._id.toString());
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Added to watchers successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Add watcher error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -502,13 +502,13 @@ router.delete('/:id/watchers', authenticate, async (req: AuthenticatedRequest, r
 
     await issue.removeWatcher(req.user!._id.toString());
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Removed from watchers successfully'
     } as ApiResponse);
   } catch (error) {
     console.error('Remove watcher error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
