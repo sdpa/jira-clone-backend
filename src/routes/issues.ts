@@ -1,11 +1,15 @@
 import express from 'express';
 import Joi from 'joi';
 import { Issue } from '../models/Issue';
-import { Project } from '../models/Project';
+import { IssueRepository } from '../repositories/IssueRepository';
+import { ProjectRepository } from '../repositories/ProjectRepository';
 import { authenticate, authorizeProjectMember } from '../middleware/auth';
 import { ApiResponse, AuthenticatedRequest, IssueType, Priority, Status, IssueFilter, PaginationQuery } from '../types';
+import { populateUser, populateProject, populateUsers } from '../utils/populate';
 
 const router = express.Router();
+const issueRepo = new IssueRepository();
+const projectRepo = new ProjectRepository();
 
 // Validation schemas
 const createIssueSchema = Joi.object({
@@ -72,7 +76,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
 
     if (projectId) {
       // Check if user has access to this project
-      const project = await Project.findById(projectId);
+      const project = await projectRepo.findById(projectId);
       if (!project || !project.isMember(req.user!._id.toString())) {
         return res.status(403).json({
           success: false,
@@ -117,19 +121,53 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
     const sort: any = {};
     sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
 
-    // Execute query
-    const [issues, total] = await Promise.all([
-      Issue.find(filter)
-        .populate('assignee', 'firstName lastName email avatar')
-        .populate('reporter', 'firstName lastName email avatar')
-        .populate('projectId', 'name key')
-        .sort(sort)
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Issue.countDocuments(filter)
-    ]);
+    // Execute query - Use projectId index if available
+    let issuesQuery;
+    if (filter.projectId) {
+      issuesQuery = await issueRepo.findByProject(filter.projectId);
+    } else {
+      issuesQuery = await issueRepo.findAll();
+    }
 
+    // Apply additional filters in memory (DynamoDB limitation)
+    let filteredIssues = issuesQuery.filter((issue: any) => {
+      if (filter.status && issue.status !== filter.status) return false;
+      if (filter.priority && issue.priority !== filter.priority) return false;
+      if (filter.type && issue.type !== filter.type) return false;
+      if (filter.assignee && issue.assignee !== filter.assignee) return false;
+      if (filter.reporter && issue.reporter !== filter.reporter) return false;
+      return true;
+    });
+
+    // Sort in memory
+    filteredIssues.sort((a: any, b: any) => {
+      const aVal = a[sortBy];
+      const bVal = b[sortBy];
+      if (sortOrder === 'asc') {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+
+    const total = filteredIssues.length;
     const pages = Math.ceil(total / parseInt(limit));
+
+    // Paginate in memory
+    const paginatedIssues = filteredIssues.slice(skip, skip + parseInt(limit));
+
+    // Populate references manually
+    const issues = await Promise.all(paginatedIssues.map(async (issue: any) => {
+      const assignee = await populateUser(issue.assignee);
+      const reporter = await populateUser(issue.reporter);
+      const project = await populateProject(issue.projectId);
+      return {
+        ...issue.toJSON(),
+        assignee,
+        reporter,
+        projectId: project
+      };
+    }));
 
     return res.json({
       success: true,
@@ -153,12 +191,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
 // Get issue by ID
 router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const issue = await Issue.findById(req.params.id)
-      .populate('assignee', 'firstName lastName email avatar')
-      .populate('reporter', 'firstName lastName email avatar')
-      .populate('projectId', 'name key')
-      .populate('comments.author', 'firstName lastName email avatar')
-      .populate('watchers', 'firstName lastName email avatar');
+    const issue = await issueRepo.findById(req.params.id);
 
     if (!issue) {
       return res.status(404).json({
@@ -168,7 +201,7 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     }
 
     // Check if user has access to this project
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -176,9 +209,23 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
+    // Populate references manually
+    const assignee = await populateUser(issue.assignee);
+    const reporter = await populateUser(issue.reporter);
+    const projectData = await populateProject(issue.projectId);
+    const watchers = await populateUsers(issue.watchers);
+
     return res.json({
       success: true,
-      data: { issue }
+      data: {
+        issue: {
+          ...issue.toJSON(),
+          assignee,
+          reporter,
+          projectId: projectData,
+          watchers
+        }
+      }
     } as ApiResponse);
   } catch (error) {
     console.error('Get issue error:', error);
@@ -203,7 +250,7 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res) => {
     const { projectId, ...issueData } = value;
 
     // Check if project exists and user has access
-    const project = await Project.findById(projectId);
+    const project = await projectRepo.findById(projectId);
     if (!project) {
       return res.status(404).json({
         success: false,
@@ -219,9 +266,9 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res) => {
     }
 
     // Generate unique issue key
-    const key = await Issue.generateUniqueKey(project.key);
+    const key = await (Issue as any).generateUniqueKey(project.key);
 
-    const issue = new Issue({
+    const issue = await issueRepo.create({
       ...issueData,
       projectId,
       key,
@@ -229,16 +276,21 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res) => {
       watchers: [req.user!._id] // Reporter is automatically added to watchers
     });
 
-    await issue.save();
-
-    const populatedIssue = await Issue.findById(issue._id)
-      .populate('assignee', 'firstName lastName email avatar')
-      .populate('reporter', 'firstName lastName email avatar')
-      .populate('projectId', 'name key');
+    // Populate references manually
+    const assignee = await populateUser(issue.assignee);
+    const reporter = await populateUser(issue.reporter);
+    const projectData = await populateProject(issue.projectId);
 
     return res.status(201).json({
       success: true,
-      data: { issue: populatedIssue },
+      data: {
+        issue: {
+          ...issue.toJSON(),
+          assignee,
+          reporter,
+          projectId: projectData
+        }
+      },
       message: 'Issue created successfully'
     } as ApiResponse);
   } catch (error) {
@@ -261,7 +313,7 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
-    const issue = await Issue.findById(req.params.id);
+    const issue = await issueRepo.findById(req.params.id);
     if (!issue) {
       return res.status(404).json({
         success: false,
@@ -270,7 +322,7 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     }
 
     // Check if user has access to this project
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -278,18 +330,33 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
-    const updatedIssue = await Issue.findByIdAndUpdate(
+    const updatedIssue = await issueRepo.update(
       req.params.id,
-      { ...value, updatedAt: new Date() },
-      { new: true, runValidators: true }
-    )
-      .populate('assignee', 'firstName lastName email avatar')
-      .populate('reporter', 'firstName lastName email avatar')
-      .populate('projectId', 'name key');
+      { ...value, updatedAt: new Date() }
+    );
+
+    if (!updatedIssue) {
+      return res.status(404).json({
+        success: false,
+        error: 'Issue not found'
+      } as ApiResponse);
+    }
+
+    // Populate references manually
+    const assignee = await populateUser(updatedIssue.assignee);
+    const reporter = await populateUser(updatedIssue.reporter);
+    const projectData = await populateProject(updatedIssue.projectId);
 
     return res.json({
       success: true,
-      data: { issue: updatedIssue },
+      data: {
+        issue: {
+          ...updatedIssue.toJSON(),
+          assignee,
+          reporter,
+          projectId: projectData
+        }
+      },
       message: 'Issue updated successfully'
     } as ApiResponse);
   } catch (error) {
@@ -304,7 +371,7 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
 // Delete issue
 router.delete('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const issue = await Issue.findById(req.params.id);
+    const issue = await issueRepo.findById(req.params.id);
     if (!issue) {
       return res.status(404).json({
         success: false,
@@ -313,7 +380,7 @@ router.delete('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     }
 
     // Check if user has access to this project
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -321,7 +388,7 @@ router.delete('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
-    await Issue.findByIdAndDelete(req.params.id);
+    await issueRepo.delete(req.params.id);
 
     return res.json({
       success: true,
@@ -348,7 +415,7 @@ router.post('/:id/comments', authenticate, async (req: AuthenticatedRequest, res
     }
 
     const { content } = value;
-    const issue = await Issue.findById(req.params.id);
+    const issue = await issueRepo.findById(req.params.id);
 
     if (!issue) {
       return res.status(404).json({
@@ -358,7 +425,7 @@ router.post('/:id/comments', authenticate, async (req: AuthenticatedRequest, res
     }
 
     // Check if user has access to this project
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -368,12 +435,10 @@ router.post('/:id/comments', authenticate, async (req: AuthenticatedRequest, res
 
     await issue.addComment(req.user!._id.toString(), content);
 
-    const updatedIssue = await Issue.findById(issue._id)
-      .populate('comments.author', 'firstName lastName email avatar');
-
+    // Return the issue with the new comment added
     return res.json({
       success: true,
-      data: { issue: updatedIssue },
+      data: { issue: issue.toJSON() },
       message: 'Comment added successfully'
     } as ApiResponse);
   } catch (error) {
@@ -397,7 +462,7 @@ router.post('/:id/time', authenticate, async (req: AuthenticatedRequest, res) =>
     }
 
     const { hours, description } = value;
-    const issue = await Issue.findById(req.params.id);
+    const issue = await issueRepo.findById(req.params.id);
 
     if (!issue) {
       return res.status(404).json({
@@ -407,7 +472,7 @@ router.post('/:id/time', authenticate, async (req: AuthenticatedRequest, res) =>
     }
 
     // Check if user has access to this project
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -425,13 +490,19 @@ router.post('/:id/time', authenticate, async (req: AuthenticatedRequest, res) =>
       );
     }
 
-    const updatedIssue = await Issue.findById(issue._id)
-      .populate('assignee', 'firstName lastName email avatar')
-      .populate('reporter', 'firstName lastName email avatar');
+    // Populate references manually
+    const assignee = await populateUser(issue.assignee);
+    const reporter = await populateUser(issue.reporter);
 
     return res.json({
       success: true,
-      data: { issue: updatedIssue },
+      data: {
+        issue: {
+          ...issue.toJSON(),
+          assignee,
+          reporter
+        }
+      },
       message: 'Time logged successfully'
     } as ApiResponse);
   } catch (error) {
@@ -446,7 +517,7 @@ router.post('/:id/time', authenticate, async (req: AuthenticatedRequest, res) =>
 // Add watcher to issue
 router.post('/:id/watchers', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const issue = await Issue.findById(req.params.id);
+    const issue = await issueRepo.findById(req.params.id);
 
     if (!issue) {
       return res.status(404).json({
@@ -456,7 +527,7 @@ router.post('/:id/watchers', authenticate, async (req: AuthenticatedRequest, res
     }
 
     // Check if user has access to this project
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -482,7 +553,7 @@ router.post('/:id/watchers', authenticate, async (req: AuthenticatedRequest, res
 // Remove watcher from issue
 router.delete('/:id/watchers', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const issue = await Issue.findById(req.params.id);
+    const issue = await issueRepo.findById(req.params.id);
 
     if (!issue) {
       return res.status(404).json({
@@ -492,7 +563,7 @@ router.delete('/:id/watchers', authenticate, async (req: AuthenticatedRequest, r
     }
 
     // Check if user has access to this project
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,

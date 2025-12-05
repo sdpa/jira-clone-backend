@@ -1,307 +1,251 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { IIssueModel, IssueType, Priority, Status, Attachment, Comment } from '../types';
+import * as dynamoose from 'dynamoose';
+import { Item } from 'dynamoose/dist/Item';
+import { IssueType, Priority, Status, Attachment, Comment } from '../types';
 
-interface IIssueDocument extends Document {
-  projectId: string;
-  key: string;
-  title: string;
-  description?: string;
-  type: IssueType;
-  priority: Priority;
-  status: Status;
-  assignee?: string;
-  reporter: string;
-  labels: string[];
-  components: string[];
-  fixVersion?: string;
-  dueDate?: Date;
-  estimatedHours?: number;
-  loggedHours: number;
-  attachments: Attachment[];
-  comments: Comment[];
-  watchers: string[];
-  createdAt: Date;
-  updatedAt: Date;
-  addComment(authorId: string, content: string, attachments?: Attachment[]): Promise<IIssueDocument>;
-  addWatcher(userId: string): Promise<IIssueDocument>;
-  removeWatcher(userId: string): Promise<IIssueDocument>;
-  logTime(hours: number): Promise<IIssueDocument>;
-  updateStatus(status: Status): Promise<IIssueDocument>;
-}
-
-const attachmentSchema = new Schema<Attachment>({
-  filename: { type: String, required: true },
-  originalName: { type: String, required: true },
-  mimeType: { type: String, required: true },
-  size: { type: Number, required: true },
-  url: { type: String, required: true },
-  uploadedBy: { type: String, required: true, ref: 'User' },
-  uploadedAt: { type: Date, default: Date.now }
-}, { _id: true });
-
-const commentSchema = new Schema<Comment>({
-  author: { type: String, required: true, ref: 'User' },
-  content: { type: String, required: true, maxlength: 10000 },
-  attachments: [attachmentSchema],
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-}, { _id: true });
-
-const issueSchema = new Schema<IIssueDocument>({
+// Issue Schema for DynamoDB
+const issueSchema = new dynamoose.Schema({
+  id: {
+    type: String,
+    hashKey: true
+  },
   projectId: {
     type: String,
     required: true,
-    ref: 'Project'
+    index: {
+      type: 'global',
+      name: 'projectIdIndex'
+    }
   },
   key: {
     type: String,
     required: true,
-    unique: true
+    index: {
+      type: 'global',
+      name: 'keyIndex'
+    }
   },
   title: {
     type: String,
-    required: true,
-    trim: true,
-    maxlength: 255
+    required: true
   },
   description: {
-    type: String,
-    trim: true,
-    maxlength: 10000
+    type: String
   },
   type: {
     type: String,
     enum: Object.values(IssueType),
-    required: true,
     default: IssueType.TASK
   },
   priority: {
     type: String,
     enum: Object.values(Priority),
-    required: true,
     default: Priority.MEDIUM
   },
   status: {
     type: String,
     enum: Object.values(Status),
-    required: true,
-    default: Status.TODO
+    default: Status.TODO,
+    index: {
+      type: 'global',
+      name: 'statusIndex'
+    }
   },
   assignee: {
     type: String,
-    ref: 'User',
-    default: null
+    index: {
+      type: 'global',
+      name: 'assigneeIndex'
+    }
   },
   reporter: {
     type: String,
     required: true,
-    ref: 'User'
+    index: {
+      type: 'global',
+      name: 'reporterIndex'
+    }
   },
-  labels: [{
-    type: String,
-    trim: true,
-    maxlength: 50
-  }],
-  components: [{
-    type: String,
-    trim: true,
-    maxlength: 100
-  }],
+  labels: {
+    type: Array,
+    schema: [String],
+    default: []
+  },
+  components: {
+    type: Array,
+    schema: [String],
+    default: []
+  },
   fixVersion: {
-    type: String,
-    trim: true,
-    maxlength: 50
+    type: String
   },
   dueDate: {
-    type: Date,
-    default: null
+    type: Date
   },
   estimatedHours: {
-    type: Number,
-    min: 0,
-    default: null
+    type: Number
   },
   loggedHours: {
     type: Number,
-    min: 0,
     default: 0
   },
-  attachments: [attachmentSchema],
-  comments: [commentSchema],
-  watchers: [{
-    type: String,
-    ref: 'User'
-  }]
+  attachments: {
+    type: Array,
+    schema: [Object],
+    default: []
+  },
+  comments: {
+    type: Array,
+    schema: [Object],
+    default: []
+  },
+  watchers: {
+    type: Array,
+    schema: [String],
+    default: []
+  }
 }, {
-  timestamps: true
+  timestamps: true,
+  saveUnknown: false
 });
 
-// Indexes
-issueSchema.index({ projectId: 1 });
-issueSchema.index({ key: 1 });
-issueSchema.index({ assignee: 1 });
-issueSchema.index({ reporter: 1 });
-issueSchema.index({ status: 1 });
-issueSchema.index({ priority: 1 });
-issueSchema.index({ type: 1 });
-issueSchema.index({ labels: 1 });
-issueSchema.index({ components: 1 });
-issueSchema.index({ createdAt: -1 });
-issueSchema.index({ updatedAt: -1 });
+// Issue class
+class IssueClass extends Item {
+  id!: string;
+  projectId!: string;
+  key!: string;
+  title!: string;
+  description?: string;
+  type!: IssueType;
+  priority!: Priority;
+  status!: Status;
+  assignee?: string;
+  reporter!: string;
+  labels!: string[];
+  components!: string[];
+  fixVersion?: string;
+  dueDate?: Date;
+  estimatedHours?: number;
+  loggedHours!: number;
+  attachments!: Attachment[];
+  comments!: Comment[];
+  watchers!: string[];
+  createdAt!: Date;
+  updatedAt!: Date;
 
-// Compound indexes for common queries
-issueSchema.index({ projectId: 1, status: 1 });
-issueSchema.index({ projectId: 1, assignee: 1 });
-issueSchema.index({ projectId: 1, type: 1 });
-
-// Virtual for issue URL
-issueSchema.virtual('url').get(function() {
-  return `/issues/${this.key}`;
-});
-
-// Virtual for time remaining
-issueSchema.virtual('timeRemaining').get(function() {
-  if (!this.estimatedHours || !this.loggedHours) return null;
-  return Math.max(0, this.estimatedHours - this.loggedHours);
-});
-
-// Virtual for progress percentage
-issueSchema.virtual('progressPercentage').get(function() {
-  if (!this.estimatedHours || this.estimatedHours === 0) return 0;
-  return Math.min(100, (this.loggedHours / this.estimatedHours) * 100);
-});
-
-// Pre-save middleware to ensure reporter is in watchers
-issueSchema.pre('save', function(next) {
-  if (this.reporter && !this.watchers.includes(this.reporter)) {
-    this.watchers.push(this.reporter);
+  // Instance method to add comment
+  async addComment(authorId: string, content: string, attachments: Attachment[] = []): Promise<IssueClass> {
+    const comment: Comment = {
+      _id: `comment-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      author: authorId,
+      content,
+      attachments,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    
+    this.comments.push(comment);
+    await this.save();
+    return this;
   }
-  next();
-});
 
-// Instance method to add comment (embedded)
-issueSchema.methods.addComment = function(authorId: string, content: string, attachments: Attachment[] = []) {
-  const comment: Comment = {
-    _id: new mongoose.Types.ObjectId().toString(),
-    author: authorId,
-    content,
-    attachments,
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-  
-  this.comments.push(comment);
-  return this.save();
-};
-
-// Instance method to get standalone comments
-issueSchema.methods.getStandaloneComments = function() {
-  const { Comment } = require('./Comment');
-  return Comment.findByIssue(this._id.toString());
-};
-
-// Instance method to get comment count
-issueSchema.methods.getCommentCount = function() {
-  const { Comment } = require('./Comment');
-  return Comment.countDocuments({ issueId: this._id.toString() });
-};
-
-// Instance method to add watcher
-issueSchema.methods.addWatcher = function(userId: string) {
-  if (!this.watchers.includes(userId)) {
-    this.watchers.push(userId);
+  // Instance method to add watcher
+  async addWatcher(userId: string): Promise<IssueClass> {
+    if (!this.watchers.includes(userId)) {
+      this.watchers.push(userId);
+    }
+    await this.save();
+    return this;
   }
-  return this.save();
-};
 
-// Instance method to remove watcher
-issueSchema.methods.removeWatcher = function(userId: string) {
-  this.watchers = this.watchers.filter((watcher: string) => watcher.toString() !== userId);
-  return this.save();
-};
+  // Instance method to remove watcher
+  async removeWatcher(userId: string): Promise<IssueClass> {
+    this.watchers = this.watchers.filter(watcher => watcher !== userId);
+    await this.save();
+    return this;
+  }
 
-// Instance method to log time
-issueSchema.methods.logTime = function(hours: number) {
-  this.loggedHours += hours;
-  return this.save();
-};
+  // Instance method to log time
+  async logTime(hours: number): Promise<IssueClass> {
+    this.loggedHours += hours;
+    await this.save();
+    return this;
+  }
 
-// Instance method to update status
-issueSchema.methods.updateStatus = function(status: Status) {
-  this.status = status;
-  return this.save();
-};
+  // Instance method to update status
+  async updateStatus(status: Status): Promise<IssueClass> {
+    this.status = status;
+    await this.save();
+    return this;
+  }
+
+  // toJSON method
+  toJSON() {
+    const obj: any = { ...this };
+    obj._id = obj.id;
+    delete obj.id;
+    return obj;
+  }
+}
+
+// Create model
+export const Issue = dynamoose.model<IssueClass>('Issue', issueSchema, {
+  create: process.env.NODE_ENV === 'development',
+  update: process.env.NODE_ENV === 'development'
+});
 
 // Static method to generate unique issue key
-issueSchema.statics.generateUniqueKey = async function(projectKey: string): Promise<string> {
-  const lastIssue = await this.findOne({ key: new RegExp(`^${projectKey}-`) })
-    .sort({ key: -1 });
+(Issue as any).generateUniqueKey = async function(projectKey: string): Promise<string> {
+  // Query all issues for this project
+  const projectIssues = await Issue.scan('key').beginsWith(projectKey).exec();
   
-  let nextNumber = 1;
-  if (lastIssue) {
-    const lastNumber = parseInt(lastIssue.key.split('-')[1]);
-    nextNumber = lastNumber + 1;
-  }
+  let maxNumber = 0;
+  projectIssues.forEach((issue: IssueClass) => {
+    const parts = issue.key.split('-');
+    if (parts.length === 2) {
+      const num = parseInt(parts[1]);
+      if (num > maxNumber) maxNumber = num;
+    }
+  });
   
-  return `${projectKey}-${nextNumber}`;
+  return `${projectKey}-${maxNumber + 1}`;
 };
 
 // Static method to find issues by project
-issueSchema.statics.findByProject = function(projectId: string) {
-  return this.find({ projectId }).populate('assignee reporter');
+(Issue as any).findByProject = async function(projectId: string) {
+  return await Issue.query('projectId').eq(projectId).using('projectIdIndex').exec();
 };
 
 // Static method to find issues by assignee
-issueSchema.statics.findByAssignee = function(assigneeId: string) {
-  return this.find({ assignee: assigneeId }).populate('projectId');
+(Issue as any).findByAssignee = async function(assigneeId: string) {
+  return await Issue.query('assignee').eq(assigneeId).using('assigneeIndex').exec();
+};
+
+// Static method to find by key
+(Issue as any).findByKey = async function(key: string) {
+  const results = await Issue.query('key').eq(key).using('keyIndex').exec();
+  return results.length > 0 ? results[0] : null;
 };
 
 // Static method to get issue statistics
-issueSchema.statics.getStatistics = async function(projectId: string) {
-  const stats = await this.aggregate([
-    { $match: { projectId } },
-    {
-      $group: {
-        _id: null,
-        total: { $sum: 1 },
-        byStatus: { $push: '$status' },
-        byPriority: { $push: '$priority' },
-        byType: { $push: '$type' },
-        totalEstimatedHours: { $sum: '$estimatedHours' },
-        totalLoggedHours: { $sum: '$loggedHours' }
-      }
-    }
-  ]);
+(Issue as any).getStatistics = async function(projectId: string) {
+  const issues = await Issue.query('projectId').eq(projectId).using('projectIdIndex').exec();
   
-  if (stats.length === 0) {
-    return {
-      total: 0,
-      byStatus: {},
-      byPriority: {},
-      byType: {},
-      totalEstimatedHours: 0,
-      totalLoggedHours: 0
-    };
-  }
-  
-  const result = stats[0];
-  
-  // Count occurrences
-  const countOccurrences = (arr: string[]) => {
-    return arr.reduce((acc, item) => {
-      acc[item] = (acc[item] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+  const stats = {
+    total: issues.length,
+    byStatus: {} as Record<string, number>,
+    byPriority: {} as Record<string, number>,
+    byType: {} as Record<string, number>,
+    totalEstimatedHours: 0,
+    totalLoggedHours: 0
   };
   
-  return {
-    total: result.total,
-    byStatus: countOccurrences(result.byStatus),
-    byPriority: countOccurrences(result.byPriority),
-    byType: countOccurrences(result.byType),
-    totalEstimatedHours: result.totalEstimatedHours || 0,
-    totalLoggedHours: result.totalLoggedHours || 0
-  };
+  issues.forEach((issue: IssueClass) => {
+    stats.byStatus[issue.status] = (stats.byStatus[issue.status] || 0) + 1;
+    stats.byPriority[issue.priority] = (stats.byPriority[issue.priority] || 0) + 1;
+    stats.byType[issue.type] = (stats.byType[issue.type] || 0) + 1;
+    stats.totalEstimatedHours += issue.estimatedHours || 0;
+    stats.totalLoggedHours += issue.loggedHours || 0;
+  });
+  
+  return stats;
 };
-
-export const Issue = mongoose.model<IIssueDocument>('Issue', issueSchema) as unknown as IIssueModel;

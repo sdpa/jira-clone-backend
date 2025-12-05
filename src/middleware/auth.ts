@@ -50,7 +50,7 @@ export const authenticate = async (
     
     try {
       const decoded = verifyToken(token);
-      const user = await User.findById(decoded.userId).select('-password');
+      const user = await User.get(decoded.userId);
       
       if (!user || !user.isActive) {
         res.status(401).json({
@@ -60,7 +60,9 @@ export const authenticate = async (
         return;
       }
       
-      req.user = user as any;
+      // Remove password before adding to request
+      const userObj = user.toJSON();
+      req.user = userObj as any;
       next();
     } catch (error) {
       res.status(401).json({
@@ -118,10 +120,11 @@ export const optionalAuth = async (
     
     try {
       const decoded = verifyToken(token);
-      const user = await User.findById(decoded.userId).select('-password');
+      const user = await User.get(decoded.userId);
       
       if (user && user.isActive) {
-        req.user = user as any;
+        const userObj = user.toJSON();
+        req.user = userObj as any;
       }
     } catch (error) {
       // Ignore token errors for optional auth
@@ -179,7 +182,7 @@ export const authorizeProjectMember = (getProjectId: (req: Request) => string) =
       
       const projectId = getProjectId(req);
       const { Project } = await import('../models/Project');
-      const project = await Project.findById(projectId);
+      const project = await Project.get(projectId);
       
       if (!project) {
         res.status(404).json({
@@ -189,7 +192,7 @@ export const authorizeProjectMember = (getProjectId: (req: Request) => string) =
         return;
       }
       
-      const isMember = project.isMember(req.user._id.toString());
+      const isMember = project.isMember(req.user._id);
       
       if (!isMember) {
         res.status(403).json({

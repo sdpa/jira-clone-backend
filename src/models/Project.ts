@@ -1,148 +1,153 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { IProjectModel, ProjectSettings, IssueType, Priority, Status } from '../types';
+import * as dynamoose from 'dynamoose';
+import { Item } from 'dynamoose/dist/Item';
+import { ProjectSettings, IssueType, Priority, Status } from '../types';
 
-interface IProjectDocument extends Document {
-  name: string;
-  description?: string;
-  key: string;
-  owner: string;
-  members: string[];
-  settings: ProjectSettings;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  addMember(userId: string): Promise<IProjectDocument>;
-  removeMember(userId: string): Promise<IProjectDocument>;
-  isMember(userId: string): boolean;
-}
-
-const projectSettingsSchema = new Schema<ProjectSettings>({
-  defaultAssignee: {
+// Project Schema for DynamoDB
+const projectSchema = new dynamoose.Schema({
+  id: {
     type: String,
-    ref: 'User'
+    hashKey: true
   },
-  issueTypes: [{
-    type: String,
-    enum: Object.values(IssueType),
-    default: [IssueType.TASK, IssueType.BUG, IssueType.STORY]
-  }],
-  priorities: [{
-    type: String,
-    enum: Object.values(Priority),
-    default: [Priority.LOW, Priority.MEDIUM, Priority.HIGH]
-  }],
-  statuses: [{
-    type: String,
-    enum: Object.values(Status),
-    default: [Status.TODO, Status.IN_PROGRESS, Status.DONE]
-  }]
-}, { _id: false });
-
-const projectSchema = new Schema<IProjectDocument>({
   name: {
     type: String,
-    required: true,
-    trim: true,
-    maxlength: 100
+    required: true
   },
   description: {
-    type: String,
-    trim: true,
-    maxlength: 1000
+    type: String
   },
   key: {
     type: String,
     required: true,
-    unique: true,
-    uppercase: true,
-    trim: true,
-    match: [/^[A-Z]{2,10}$/, 'Project key must be 2-10 uppercase letters']
+    index: {
+      type: 'global',
+      name: 'keyIndex'
+    }
   },
   owner: {
     type: String,
     required: true,
-    ref: 'User'
+    index: {
+      type: 'global',
+      name: 'ownerIndex'
+    }
   },
-  members: [{
-    type: String,
-    ref: 'User'
-  }],
+  members: {
+    type: Array,
+    schema: [String],
+    default: []
+  },
   settings: {
-    type: projectSettingsSchema,
-    default: () => ({
+    type: Object,
+    schema: {
+      defaultAssignee: String,
+      issueTypes: {
+        type: Array,
+        schema: [String],
+        default: [IssueType.TASK, IssueType.BUG, IssueType.STORY]
+      },
+      priorities: {
+        type: Array,
+        schema: [String],
+        default: [Priority.LOW, Priority.MEDIUM, Priority.HIGH]
+      },
+      statuses: {
+        type: Array,
+        schema: [String],
+        default: [Status.TODO, Status.IN_PROGRESS, Status.DONE]
+      }
+    },
+    default: {
       issueTypes: [IssueType.TASK, IssueType.BUG, IssueType.STORY],
       priorities: [Priority.LOW, Priority.MEDIUM, Priority.HIGH],
       statuses: [Status.TODO, Status.IN_PROGRESS, Status.DONE]
-    })
+    }
   },
   isActive: {
     type: Boolean,
     default: true
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  saveUnknown: false
 });
 
-// Indexes
-projectSchema.index({ key: 1 });
-projectSchema.index({ owner: 1 });
-projectSchema.index({ members: 1 });
-projectSchema.index({ isActive: 1 });
+// Project class
+class ProjectClass extends Item {
+  id!: string;
+  name!: string;
+  description?: string;
+  key!: string;
+  owner!: string;
+  members!: string[];
+  settings!: ProjectSettings;
+  isActive!: boolean;
+  createdAt!: Date;
+  updatedAt!: Date;
 
-// Virtual for member count
-projectSchema.virtual('memberCount').get(function() {
-  return this.members.length + 1; // +1 for owner
-});
-
-// Pre-save middleware to ensure owner is in members
-projectSchema.pre('save', function(next) {
-  if (this.owner && !this.members.includes(this.owner)) {
-    this.members.push(this.owner);
+  // Instance method to add member
+  async addMember(userId: string): Promise<ProjectClass> {
+    if (!this.members.includes(userId)) {
+      this.members.push(userId);
+    }
+    await this.save();
+    return this;
   }
-  next();
-});
 
-// Instance method to add member
-projectSchema.methods.addMember = function(userId: string) {
-  if (!this.members.includes(userId)) {
-    this.members.push(userId);
+  // Instance method to remove member
+  async removeMember(userId: string): Promise<ProjectClass> {
+    this.members = this.members.filter(member => member !== userId);
+    await this.save();
+    return this;
   }
-  return this.save();
-};
 
-// Instance method to remove member
-projectSchema.methods.removeMember = function(userId: string) {
-  this.members = this.members.filter((member: string) => member.toString() !== userId);
-  return this.save();
-};
+  // Instance method to check if user is member
+  isMember(userId: string): boolean {
+    return this.owner === userId || this.members.includes(userId);
+  }
 
-// Instance method to check if user is member
-projectSchema.methods.isMember = function(userId: string): boolean {
-  return this.owner.toString() === userId || this.members.includes(userId);
-};
+  // toJSON method
+  toJSON() {
+    const obj: any = { ...this };
+    obj._id = obj.id;
+    delete obj.id;
+    return obj;
+  }
+}
+
+// Create model
+export const Project = dynamoose.model<ProjectClass>('Project', projectSchema, {
+  create: process.env.NODE_ENV === 'development',
+  update: process.env.NODE_ENV === 'development'
+});
 
 // Static method to find projects by user
-projectSchema.statics.findByUser = function(userId: string) {
-  return this.find({
-    $or: [
-      { owner: userId },
-      { members: userId }
-    ],
-    isActive: true
-  });
+(Project as any).findByUser = async function(userId: string) {
+  // Get projects where user is owner
+  const ownedProjects = await Project.query('owner').eq(userId).using('ownerIndex').exec();
+  
+  // Get projects where user is a member (requires scan)
+  const memberProjects = await Project.scan('members').contains(userId).and().where('isActive').eq(true).exec();
+  
+  // Combine and deduplicate
+  const projectMap = new Map();
+  [...ownedProjects, ...memberProjects].forEach(p => projectMap.set(p.id, p));
+  
+  return Array.from(projectMap.values());
 };
 
 // Static method to generate unique project key
-projectSchema.statics.generateUniqueKey = async function(name: string): Promise<string> {
+(Project as any).generateUniqueKey = async function(name: string): Promise<string> {
   const baseKey = name
     .replace(/[^a-zA-Z0-9]/g, '')
     .toUpperCase()
-    .substring(0, 10);
+    .substring(0, 10) || 'PROJ';
   
   let key = baseKey;
   let counter = 1;
   
-  while (await this.findOne({ key })) {
+  while (true) {
+    const existing = await Project.query('key').eq(key).using('keyIndex').exec();
+    if (existing.length === 0) break;
     key = `${baseKey}${counter}`;
     counter++;
   }
@@ -150,4 +155,8 @@ projectSchema.statics.generateUniqueKey = async function(name: string): Promise<
   return key;
 };
 
-export const Project = mongoose.model<IProjectDocument>('Project', projectSchema) as unknown as IProjectModel;
+// Static method to find by key
+(Project as any).findByKey = async function(key: string) {
+  const results = await Project.query('key').eq(key).using('keyIndex').exec();
+  return results.length > 0 ? results[0] : null;
+};

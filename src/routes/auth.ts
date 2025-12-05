@@ -1,12 +1,13 @@
 import express from 'express';
 import Joi from 'joi';
-import { User } from '../models/User';
+import { UserRepository } from '../repositories/UserRepository';
 import { generateToken, authenticate } from '../middleware/auth';
 import { ApiResponse, IUser } from '../types';
 import { Request as ExpressRequest } from 'express';
 import { verifyGoogleToken } from '../utils/googleAuth';
 
 const router = express.Router();
+const userRepo = new UserRepository();
 
 // Validation schemas
 const registerSchema = Joi.object({
@@ -50,7 +51,7 @@ router.post('/register', async (req, res) => {
     const { email, password, firstName, lastName } = value;
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await userRepo.findByEmail(email);
     if (existingUser) {
       return res.status(400).json({
         success: false,
@@ -58,15 +59,17 @@ router.post('/register', async (req, res) => {
       } as ApiResponse);
     }
 
+    // Hash password before saving
+    const salt = await import('bcryptjs').then(bcrypt => bcrypt.genSalt(12));
+    const hashedPassword = await import('bcryptjs').then(bcrypt => bcrypt.hash(password, salt));
+
     // Create new user
-    const user = new User({
-      email,
-      password,
+    const user = await userRepo.create({
+      email: email.toLowerCase(),
+      password: hashedPassword,
       firstName,
       lastName
     });
-
-    await user.save();
 
     // Generate token
     const token = generateToken(user as any);
@@ -102,7 +105,7 @@ router.post('/login', async (req, res) => {
     const { email, password } = value;
 
     // Find user by email
-    const user = await User.findOne({ email }).select('+password');
+    const user = await userRepo.findByEmail(email);
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -175,28 +178,31 @@ router.post('/google', async (req, res) => {
     }
 
     // Check if user exists
-    let user = await User.findOne({ email: googleUser.email });
+    let user = await userRepo.findByEmail(googleUser.email);
 
     if (user) {
       // Update user info from Google if they exist
       user.firstName = googleUser.given_name || googleUser.name.split(' ')[0] || user.firstName;
       user.lastName = googleUser.family_name || googleUser.name.split(' ').slice(1).join(' ') || user.lastName;
       user.avatar = googleUser.picture || user.avatar;
-      
+
       // Update last login
       await user.updateLastLogin();
     } else {
       // Create new user from Google data
-      user = new User({
-        email: googleUser.email,
-        password: Math.random().toString(36).slice(-12), // Random password for Google users
+      const salt = await import('bcryptjs').then(bcrypt => bcrypt.genSalt(12));
+      const hashedPassword = await import('bcryptjs').then(bcrypt =>
+        bcrypt.hash(Math.random().toString(36).slice(-12), salt)
+      );
+
+      user = await userRepo.create({
+        email: googleUser.email.toLowerCase(),
+        password: hashedPassword,
         firstName: googleUser.given_name || googleUser.name.split(' ')[0] || 'User',
         lastName: googleUser.family_name || googleUser.name.split(' ').slice(1).join(' ') || '',
         avatar: googleUser.picture,
         isActive: true
       });
-
-      await user.save();
     }
 
     // Generate JWT token
@@ -222,15 +228,15 @@ router.post('/google', async (req, res) => {
 // Get current user profile
 router.get('/me', authenticate, async (req: ExpressRequest & { user?: IUser }, res) => {
   try {
-    const user = await User.findById(req.user!._id);
-    
-    res.json({
+    const user = await userRepo.findById(req.user!._id);
+
+    return res.json({
       success: true,
-      data: { user: user!.toJSON() }
+      data: { user: user ? user.toJSON() : req.user }
     } as ApiResponse);
   } catch (error) {
     console.error('Get profile error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     } as ApiResponse);
@@ -248,15 +254,21 @@ router.put('/profile', authenticate, async (req: ExpressRequest & { user?: IUser
       } as ApiResponse);
     }
 
-    const user = await User.findByIdAndUpdate(
+    const user = await userRepo.update(
       req.user!._id,
-      { ...value, updatedAt: new Date() },
-      { new: true, runValidators: true }
+      { ...value, updatedAt: new Date() }
     );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      } as ApiResponse);
+    }
 
     return res.json({
       success: true,
-      data: { user: user!.toJSON() },
+      data: { user: user.toJSON() },
       message: 'Profile updated successfully'
     } as ApiResponse);
   } catch (error) {
@@ -282,7 +294,7 @@ router.put('/change-password', authenticate, async (req: ExpressRequest & { user
     const { currentPassword, newPassword } = value;
 
     // Get user with password
-    const user = await User.findById(req.user!._id).select('+password');
+    const user = await userRepo.findById(req.user!._id);
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -300,7 +312,9 @@ router.put('/change-password', authenticate, async (req: ExpressRequest & { user
     }
 
     // Update password
-    user.password = newPassword;
+    const salt = await import('bcryptjs').then(bcrypt => bcrypt.genSalt(12));
+    const hashedPassword = await import('bcryptjs').then(bcrypt => bcrypt.hash(newPassword, salt));
+    user.password = hashedPassword;
     await user.save();
 
     return res.json({

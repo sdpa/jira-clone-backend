@@ -1,10 +1,14 @@
 import express from 'express';
 import Joi from 'joi';
-import { Project } from '../models/Project';
+import { ProjectRepository } from '../repositories/ProjectRepository';
 import { authenticate, authorize, authorizeProjectMember } from '../middleware/auth';
 import { ApiResponse, AuthenticatedRequest, UserRole, IssueType, Priority, Status } from '../types';
+import { populateUser, populateUsers } from '../utils/populate';
+import { IssueRepository } from '../repositories/IssueRepository';
 
 const router = express.Router();
+const projectRepo = new ProjectRepository();
+const issueRepo = new IssueRepository();
 
 // Validation schemas
 const createProjectSchema = Joi.object({
@@ -31,15 +35,22 @@ const addMemberSchema = Joi.object({
 // Get all projects for user
 router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const projectsQuery = Project.findByUser(req.user!._id.toString());
-    const projects = await projectsQuery
-      .populate('owner', 'firstName lastName email avatar')
-      .populate('members', 'firstName lastName email avatar')
-      .sort({ updatedAt: -1 });
+    const projects = await projectRepo.findByUser(req.user!._id.toString());
+
+    // Populate owner and members manually
+    const populatedProjects = await Promise.all(projects.map(async (project: any) => {
+      const owner = await populateUser(project.owner);
+      const members = await populateUsers(project.members);
+      return {
+        ...project.toJSON(),
+        owner,
+        members
+      };
+    }));
 
     return res.json({
       success: true,
-      data: { projects }
+      data: { projects: populatedProjects }
     } as ApiResponse);
   } catch (error) {
     console.error('Get projects error:', error);
@@ -53,9 +64,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res) => {
 // Get project by ID
 router.get('/:id', authenticate, authorizeProjectMember((req) => req.params.id), async (req: AuthenticatedRequest, res) => {
   try {
-    const project = await Project.findById(req.params.id)
-      .populate('owner', 'firstName lastName email avatar')
-      .populate('members', 'firstName lastName email avatar');
+    const project = await projectRepo.findById(req.params.id);
 
     if (!project) {
       return res.status(404).json({
@@ -64,9 +73,19 @@ router.get('/:id', authenticate, authorizeProjectMember((req) => req.params.id),
       } as ApiResponse);
     }
 
+    // Populate owner and members manually
+    const owner = await populateUser(project.owner);
+    const members = await populateUsers(project.members);
+
     return res.json({
       success: true,
-      data: { project }
+      data: {
+        project: {
+          ...project.toJSON(),
+          owner,
+          members
+        }
+      }
     } as ApiResponse);
   } catch (error) {
     console.error('Get project error:', error);
@@ -91,10 +110,20 @@ router.post('/', authenticate, authorize(UserRole.ADMIN, UserRole.PROJECT_MANAGE
     const { name, description, key } = value;
 
     // Generate unique project key if not provided
-    const projectKey = key || await Project.generateUniqueKey(name);
+    // Note: Moving this logic to repository or service would be better, but keeping here for now
+    let projectKey = key;
+    if (!projectKey) {
+      // Simple generation logic for now, ideally should be in a service
+      projectKey = name.substring(0, 3).toUpperCase();
+      let counter = 1;
+      while (await projectRepo.findByKey(projectKey)) {
+        projectKey = `${name.substring(0, 3).toUpperCase()}${counter}`;
+        counter++;
+      }
+    }
 
     // Check if key already exists
-    const existingProject = await Project.findOne({ key: projectKey });
+    const existingProject = await projectRepo.findByKey(projectKey);
     if (existingProject) {
       return res.status(400).json({
         success: false,
@@ -102,7 +131,7 @@ router.post('/', authenticate, authorize(UserRole.ADMIN, UserRole.PROJECT_MANAGE
       } as ApiResponse);
     }
 
-    const project = new Project({
+    const project = await projectRepo.create({
       name,
       description,
       key: projectKey,
@@ -110,15 +139,19 @@ router.post('/', authenticate, authorize(UserRole.ADMIN, UserRole.PROJECT_MANAGE
       members: [req.user!._id] // Owner is automatically added to members
     });
 
-    await project.save();
-
-    const populatedProject = await Project.findById(project._id)
-      .populate('owner', 'firstName lastName email avatar')
-      .populate('members', 'firstName lastName email avatar');
+    // Populate owner and members manually
+    const owner = await populateUser(project.owner);
+    const members = await populateUsers(project.members);
 
     return res.status(201).json({
       success: true,
-      data: { project: populatedProject },
+      data: {
+        project: {
+          ...project.toJSON(),
+          owner,
+          members
+        }
+      },
       message: 'Project created successfully'
     } as ApiResponse);
   } catch (error) {
@@ -141,13 +174,10 @@ router.put('/:id', authenticate, authorizeProjectMember((req) => req.params.id),
       } as ApiResponse);
     }
 
-    const project = await Project.findByIdAndUpdate(
+    const project = await projectRepo.update(
       req.params.id,
-      { ...value, updatedAt: new Date() },
-      { new: true, runValidators: true }
-    )
-      .populate('owner', 'firstName lastName email avatar')
-      .populate('members', 'firstName lastName email avatar');
+      { ...value, updatedAt: new Date() }
+    );
 
     if (!project) {
       return res.status(404).json({
@@ -156,9 +186,19 @@ router.put('/:id', authenticate, authorizeProjectMember((req) => req.params.id),
       } as ApiResponse);
     }
 
+    // Populate owner and members manually
+    const owner = await populateUser(project.owner);
+    const members = await populateUsers(project.members);
+
     return res.json({
       success: true,
-      data: { project },
+      data: {
+        project: {
+          ...project.toJSON(),
+          owner,
+          members
+        }
+      },
       message: 'Project updated successfully'
     } as ApiResponse);
   } catch (error) {
@@ -173,8 +213,8 @@ router.put('/:id', authenticate, authorizeProjectMember((req) => req.params.id),
 // Delete project
 router.delete('/:id', authenticate, authorize(UserRole.ADMIN), async (req: AuthenticatedRequest, res) => {
   try {
-    const project = await Project.findById(req.params.id);
-    
+    const project = await projectRepo.findById(req.params.id);
+
     if (!project) {
       return res.status(404).json({
         success: false,
@@ -211,7 +251,7 @@ router.post('/:id/members', authenticate, authorizeProjectMember((req) => req.pa
     }
 
     const { userId } = value;
-    const project = await Project.findById(req.params.id);
+    const project = await projectRepo.findById(req.params.id);
 
     if (!project) {
       return res.status(404).json({
@@ -230,13 +270,19 @@ router.post('/:id/members', authenticate, authorizeProjectMember((req) => req.pa
 
     await project.addMember(userId);
 
-    const updatedProject = await Project.findById(project._id)
-      .populate('owner', 'firstName lastName email avatar')
-      .populate('members', 'firstName lastName email avatar');
+    // Populate owner and members manually
+    const owner = await populateUser(project.owner);
+    const members = await populateUsers(project.members);
 
     return res.json({
       success: true,
-      data: { project: updatedProject },
+      data: {
+        project: {
+          ...project.toJSON(),
+          owner,
+          members
+        }
+      },
       message: 'Member added successfully'
     } as ApiResponse);
   } catch (error) {
@@ -252,7 +298,7 @@ router.post('/:id/members', authenticate, authorizeProjectMember((req) => req.pa
 router.delete('/:id/members/:userId', authenticate, authorizeProjectMember((req) => req.params.id), async (req: AuthenticatedRequest, res) => {
   try {
     const { userId } = req.params;
-    const project = await Project.findById(req.params.id);
+    const project = await projectRepo.findById(req.params.id);
 
     if (!project) {
       return res.status(404).json({
@@ -279,13 +325,19 @@ router.delete('/:id/members/:userId', authenticate, authorizeProjectMember((req)
 
     await project.removeMember(userId);
 
-    const updatedProject = await Project.findById(project._id)
-      .populate('owner', 'firstName lastName email avatar')
-      .populate('members', 'firstName lastName email avatar');
+    // Populate owner and members manually
+    const owner = await populateUser(project.owner);
+    const members = await populateUsers(project.members);
 
     return res.json({
       success: true,
-      data: { project: updatedProject },
+      data: {
+        project: {
+          ...project.toJSON(),
+          owner,
+          members
+        }
+      },
       message: 'Member removed successfully'
     } as ApiResponse);
   } catch (error) {
@@ -300,8 +352,7 @@ router.delete('/:id/members/:userId', authenticate, authorizeProjectMember((req)
 // Get project statistics
 router.get('/:id/stats', authenticate, authorizeProjectMember((req) => req.params.id), async (req: AuthenticatedRequest, res) => {
   try {
-    const { Issue } = await import('../models/Issue');
-    const stats = await Issue.getStatistics(req.params.id);
+    const stats = await issueRepo.getStatistics(req.params.id);
 
     return res.json({
       success: true,

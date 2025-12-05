@@ -10,7 +10,8 @@ import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import mongoose from 'mongoose';
+import * as dynamoose from 'dynamoose';
+import { DynamoDB } from '@aws-sdk/client-dynamodb';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -31,7 +32,9 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/jira-clone';
+const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+const DYNAMODB_ENDPOINT = process.env.DYNAMODB_ENDPOINT; // For local DynamoDB
+const TABLE_PREFIX = process.env.DYNAMODB_TABLE_PREFIX || 'jira-clone';
 
 // Rate limiting
 const limiter = rateLimit({
@@ -71,13 +74,14 @@ app.get('/api/env-check', (req, res) => {
     data: {
       nodeEnv: process.env.NODE_ENV || 'not set',
       port: process.env.PORT || 'not set',
-      hasMongoUri: !!process.env.MONGODB_URI,
+      awsRegion: process.env.AWS_REGION || 'not set',
       hasJwtSecret: !!process.env.JWT_SECRET,
       hasGoogleClientId: !!process.env.GOOGLE_CLIENT_ID,
       googleClientIdLength: (process.env.GOOGLE_CLIENT_ID || '').length,
-      googleClientIdPreview: process.env.GOOGLE_CLIENT_ID 
-        ? `${process.env.GOOGLE_CLIENT_ID.substring(0, 20)}...` 
-        : 'NOT SET'
+      googleClientIdPreview: process.env.GOOGLE_CLIENT_ID
+        ? `${process.env.GOOGLE_CLIENT_ID.substring(0, 20)}...`
+        : 'NOT SET',
+      dynamoDbEndpoint: process.env.DYNAMODB_ENDPOINT || 'AWS DynamoDB Service'
     }
   });
 });
@@ -99,26 +103,24 @@ app.use('*', (req, res) => {
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Global error handler:', err);
-  
-  // Mongoose validation error
+
+  // DynamoDB validation error
   if (err.name === 'ValidationError') {
-    const errors = Object.values(err.errors).map((error: any) => error.message);
     return res.status(400).json({
       success: false,
       error: 'Validation error',
-      details: errors
+      details: err.message
     });
   }
-  
-  // Mongoose duplicate key error
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
+
+  // DynamoDB conditional check failed (duplicate key)
+  if (err.name === 'ConditionalCheckFailedException') {
     return res.status(400).json({
       success: false,
-      error: `${field} already exists`
+      error: 'Item already exists'
     });
   }
-  
+
   // JWT errors
   if (err.name === 'JsonWebTokenError') {
     return res.status(401).json({
@@ -126,14 +128,14 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
       error: 'Invalid token'
     });
   }
-  
+
   if (err.name === 'TokenExpiredError') {
     return res.status(401).json({
       success: false,
       error: 'Token expired'
     });
   }
-  
+
   // Default error
   return res.status(err.status || 500).json({
     success: false,
@@ -150,13 +152,13 @@ io.use(async (socket, next) => {
     if (!token) {
       return next(new Error('Authentication error'));
     }
-    
+
     const { verifyToken } = await import('./middleware/auth');
     const decoded = verifyToken(token);
-    
+
     socket.data.userId = decoded.userId;
     connectedUsers.set(socket.id, decoded.userId);
-    
+
     next();
   } catch (error) {
     next(new Error('Authentication error'));
@@ -165,39 +167,39 @@ io.use(async (socket, next) => {
 
 io.on('connection', (socket) => {
   console.log(`User ${socket.data.userId} connected with socket ${socket.id}`);
-  
+
   // Join project rooms
   socket.on('join-project', (projectId: string) => {
     socket.join(`project-${projectId}`);
     console.log(`User ${socket.data.userId} joined project ${projectId}`);
   });
-  
+
   // Leave project rooms
   socket.on('leave-project', (projectId: string) => {
     socket.leave(`project-${projectId}`);
     console.log(`User ${socket.data.userId} left project ${projectId}`);
   });
-  
+
   // Handle issue updates
   socket.on('issue-updated', (data: { issueId: string, projectId: string, changes: any }) => {
     socket.to(`project-${data.projectId}`).emit('issue-updated', data);
   });
-  
+
   // Handle issue created
   socket.on('issue-created', (data: { issue: any, projectId: string }) => {
     socket.to(`project-${data.projectId}`).emit('issue-created', data);
   });
-  
+
   // Handle issue deleted
   socket.on('issue-deleted', (data: { issueId: string, projectId: string }) => {
     socket.to(`project-${data.projectId}`).emit('issue-deleted', data);
   });
-  
+
   // Handle comment added
   socket.on('comment-added', (data: { issueId: string, projectId: string, comment: any }) => {
     socket.to(`project-${data.projectId}`).emit('comment-added', data);
   });
-  
+
   // Handle disconnect
   socket.on('disconnect', () => {
     console.log(`User ${socket.data.userId} disconnected`);
@@ -205,28 +207,40 @@ io.on('connection', (socket) => {
   });
 });
 
-// Connect to MongoDB
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('Connected to MongoDB');
-    
-    // Start server
-    server.listen(PORT, () => {
-      console.log(`JIRA Clone API server running on port ${PORT}`);
-      console.log(`Health check: http://localhost:${PORT}/api/health`);
-    });
-  })
-  .catch((error) => {
-    console.error('MongoDB connection error:', error);
-    process.exit(1);
-  });
+// Configure AWS DynamoDB
+console.log('🔄 Configuring AWS DynamoDB...');
+
+// Set up DynamoDB client
+const ddb = new DynamoDB({
+  region: AWS_REGION,
+  ...(DYNAMODB_ENDPOINT && { endpoint: DYNAMODB_ENDPOINT }) // For local DynamoDB
+});
+
+// Configure Dynamoose
+dynamoose.aws.ddb.set(ddb);
+
+// Set global model options
+
+
+console.log('✅ AWS DynamoDB configured successfully');
+console.log(`   Region: ${AWS_REGION}`);
+console.log(`   Table Prefix: ${TABLE_PREFIX}`);
+console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`   Endpoint: ${DYNAMODB_ENDPOINT || 'AWS DynamoDB Service'}`);
+
+// Start server (DynamoDB is configured and ready)
+server.listen(PORT, () => {
+  console.log(`🚀 JIRA Clone API server running on port ${PORT}`);
+  console.log(`   Health check: http://localhost:${PORT}/api/health`);
+  console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`   Datastore: AWS DynamoDB`);
+});
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
   server.close(() => {
     console.log('Process terminated');
-    mongoose.connection.close();
   });
 });
 
@@ -234,7 +248,6 @@ process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
   server.close(() => {
     console.log('Process terminated');
-    mongoose.connection.close();
   });
 });
 

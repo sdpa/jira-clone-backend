@@ -1,12 +1,17 @@
 import express from 'express';
 import Joi from 'joi';
 import { Comment } from '../models/Comment';
-import { Issue } from '../models/Issue';
-import { Project } from '../models/Project';
+import { CommentRepository } from '../repositories/CommentRepository';
+import { IssueRepository } from '../repositories/IssueRepository';
+import { ProjectRepository } from '../repositories/ProjectRepository';
 import { authenticate } from '../middleware/auth';
 import { ApiResponse, AuthenticatedRequest, PaginationQuery } from '../types';
+import { populateUser } from '../utils/populate';
 
 const router = express.Router();
+const commentRepo = new CommentRepository();
+const issueRepo = new IssueRepository();
+const projectRepo = new ProjectRepository();
 
 // Validation schemas
 const createCommentSchema = Joi.object({
@@ -29,7 +34,7 @@ router.get('/issues/:issueId/comments', authenticate, async (req: AuthenticatedR
     } = req.query as any;
 
     // Check if issue exists and user has access
-    const issue = await Issue.findById(issueId);
+    const issue = await issueRepo.findById(issueId);
     if (!issue) {
       return res.status(404).json({
         success: false,
@@ -37,7 +42,7 @@ router.get('/issues/:issueId/comments', authenticate, async (req: AuthenticatedR
       } as ApiResponse);
     }
 
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -51,13 +56,22 @@ router.get('/issues/:issueId/comments', authenticate, async (req: AuthenticatedR
     sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
 
     // Execute query
-    const commentsQuery = Comment.findByIssue(issueId);
-    const [comments, total] = await Promise.all([
-      commentsQuery.sort(sort).skip(skip).limit(parseInt(limit)),
-      Comment.countDocuments({ issueId })
-    ]);
+    const commentsQuery = await commentRepo.findByIssue(issueId);
 
+    // Sort in memory (DynamoDB limitation for non-key attributes)
+    commentsQuery.sort((a: any, b: any) => {
+      const aVal = a[sortBy];
+      const bVal = b[sortBy];
+      if (sortOrder === 'asc') {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+
+    const total = commentsQuery.length;
     const pages = Math.ceil(total / parseInt(limit));
+    const comments = commentsQuery.slice(skip, skip + parseInt(limit));
 
     return res.json({
       success: true,
@@ -81,9 +95,7 @@ router.get('/issues/:issueId/comments', authenticate, async (req: AuthenticatedR
 // Get a specific comment
 router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const comment = await Comment.findById(req.params.id)
-      .populate('author', 'firstName lastName email avatar')
-      .populate('issueId', 'title key projectId');
+    const comment = await commentRepo.findById(req.params.id);
 
     if (!comment) {
       return res.status(404).json({
@@ -93,7 +105,7 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     }
 
     // Check if user has access to the issue
-    const issue = await Issue.findById(comment.issueId);
+    const issue = await issueRepo.findById(comment.issueId);
     if (!issue) {
       return res.status(404).json({
         success: false,
@@ -101,7 +113,7 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -109,9 +121,17 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
+    // Populate author manually
+    const author = await populateUser(comment.author);
+
     return res.json({
       success: true,
-      data: { comment }
+      data: {
+        comment: {
+          ...comment.toJSON(),
+          author
+        }
+      }
     } as ApiResponse);
   } catch (error) {
     console.error('Get comment error:', error);
@@ -137,7 +157,7 @@ router.post('/issues/:issueId/comments', authenticate, async (req: Authenticated
     const { content } = value;
 
     // Check if issue exists and user has access
-    const issue = await Issue.findById(issueId);
+    const issue = await issueRepo.findById(issueId);
     if (!issue) {
       return res.status(404).json({
         success: false,
@@ -145,7 +165,7 @@ router.post('/issues/:issueId/comments', authenticate, async (req: Authenticated
       } as ApiResponse);
     }
 
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -154,23 +174,26 @@ router.post('/issues/:issueId/comments', authenticate, async (req: Authenticated
     }
 
     // Create comment
-    const comment = new Comment({
+    const comment = await commentRepo.create({
       issueId,
       author: req.user!._id,
       content
     });
 
-    await comment.save();
-
     // Also add comment to issue's embedded comments array for backward compatibility
     await issue.addComment(req.user!._id.toString(), content);
 
-    const populatedComment = await Comment.findById(comment._id)
-      .populate('author', 'firstName lastName email avatar');
+    // Populate author manually
+    const author = await populateUser(comment.author);
 
     return res.status(201).json({
       success: true,
-      data: { comment: populatedComment },
+      data: {
+        comment: {
+          ...comment.toJSON(),
+          author
+        }
+      },
       message: 'Comment created successfully'
     } as ApiResponse);
   } catch (error) {
@@ -194,7 +217,7 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     }
 
     const { content } = value;
-    const comment = await Comment.findById(req.params.id);
+    const comment = await commentRepo.findById(req.params.id);
 
     if (!comment) {
       return res.status(404).json({
@@ -214,12 +237,17 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
     // Update comment
     await comment.updateContent(content);
 
-    const updatedComment = await Comment.findById(comment._id)
-      .populate('author', 'firstName lastName email avatar');
+    // Populate author manually
+    const author = await populateUser(comment.author);
 
     return res.json({
       success: true,
-      data: { comment: updatedComment },
+      data: {
+        comment: {
+          ...comment.toJSON(),
+          author
+        }
+      },
       message: 'Comment updated successfully'
     } as ApiResponse);
   } catch (error) {
@@ -234,7 +262,7 @@ router.put('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
 // Delete a comment
 router.delete('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const comment = await Comment.findById(req.params.id);
+    const comment = await commentRepo.findById(req.params.id);
 
     if (!comment) {
       return res.status(404).json({
@@ -254,7 +282,7 @@ router.delete('/:id', authenticate, async (req: AuthenticatedRequest, res) => {
       } as ApiResponse);
     }
 
-    await Comment.findByIdAndDelete(req.params.id);
+    await commentRepo.delete(req.params.id);
 
     return res.json({
       success: true,
@@ -275,7 +303,7 @@ router.get('/issues/:issueId/comments/stats', authenticate, async (req: Authenti
     const { issueId } = req.params;
 
     // Check if issue exists and user has access
-    const issue = await Issue.findById(issueId);
+    const issue = await issueRepo.findById(issueId);
     if (!issue) {
       return res.status(404).json({
         success: false,
@@ -283,7 +311,7 @@ router.get('/issues/:issueId/comments/stats', authenticate, async (req: Authenti
       } as ApiResponse);
     }
 
-    const project = await Project.findById(issue.projectId);
+    const project = await projectRepo.findById(issue.projectId);
     if (!project || !project.isMember(req.user!._id.toString())) {
       return res.status(403).json({
         success: false,
@@ -291,7 +319,7 @@ router.get('/issues/:issueId/comments/stats', authenticate, async (req: Authenti
       } as ApiResponse);
     }
 
-    const stats = await Comment.getCommentStats(issueId);
+    const stats = await (Comment as any).getCommentStats(issueId);
 
     return res.json({
       success: true,
@@ -323,13 +351,22 @@ router.get('/author/:authorId', authenticate, async (req: AuthenticatedRequest, 
     sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
 
     // Execute query
-    const commentsQuery = Comment.findByAuthor(authorId);
-    const [comments, total] = await Promise.all([
-      commentsQuery.sort(sort).skip(skip).limit(parseInt(limit)),
-      Comment.countDocuments({ author: authorId })
-    ]);
+    const commentsQuery = await commentRepo.findByAuthor(authorId);
 
+    // Sort in memory
+    commentsQuery.sort((a: any, b: any) => {
+      const aVal = a[sortBy];
+      const bVal = b[sortBy];
+      if (sortOrder === 'asc') {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+
+    const total = commentsQuery.length;
     const pages = Math.ceil(total / parseInt(limit));
+    const comments = commentsQuery.slice(skip, skip + parseInt(limit));
 
     return res.json({
       success: true,

@@ -1,4 +1,3 @@
-import { Document, Model } from 'mongoose';
 import { Request } from 'express';
 
 // User Types
@@ -265,25 +264,28 @@ export interface SocketEvent {
   timestamp: Date;
 }
 
-// Model interfaces with static methods
-export interface IUserModel extends Model<any> {
+// Model interfaces with static methods (for DynamoDB)
+export interface IUserModel {
   findActiveUsers(): any;
   findByRole(role: UserRole): any;
+  findByEmail(email: string): any;
 }
 
-export interface IProjectModel extends Model<any> {
+export interface IProjectModel {
   findByUser(userId: string): any;
   generateUniqueKey(name: string): Promise<string>;
+  findByKey(key: string): any;
 }
 
-export interface IIssueModel extends Model<any> {
+export interface IIssueModel {
   generateUniqueKey(projectKey: string): Promise<string>;
   findByProject(projectId: string): any;
   findByAssignee(assigneeId: string): any;
   getStatistics(projectId: string): Promise<any>;
+  findByKey(key: string): any;
 }
 
-export interface ICommentModel extends Model<any> {
+export interface ICommentModel {
   findByIssue(issueId: string): any;
   findByAuthor(authorId: string): any;
   getCommentStats(issueId: string): Promise<any>;

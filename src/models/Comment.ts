@@ -1,124 +1,117 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { ICommentModel, Attachment } from '../types';
+import * as dynamoose from 'dynamoose';
+import { Item } from 'dynamoose/dist/Item';
+import { Attachment } from '../types';
 
-interface ICommentDocument extends Document {
-  issueId: string;
-  author: string;
-  content: string;
-  attachments: Attachment[];
-  createdAt: Date;
-  updatedAt: Date;
-  updateContent(content: string): Promise<ICommentDocument>;
-  addAttachment(attachment: Attachment): Promise<ICommentDocument>;
-  removeAttachment(attachmentId: string): Promise<ICommentDocument>;
-}
-
-const attachmentSchema = new Schema<Attachment>({
-  filename: { type: String, required: true },
-  originalName: { type: String, required: true },
-  mimeType: { type: String, required: true },
-  size: { type: Number, required: true },
-  url: { type: String, required: true },
-  uploadedBy: { type: String, required: true, ref: 'User' },
-  uploadedAt: { type: Date, default: Date.now }
-}, { _id: true });
-
-const commentSchema = new Schema<ICommentDocument>({
+// Comment Schema for DynamoDB
+const commentSchema = new dynamoose.Schema({
+  id: {
+    type: String,
+    hashKey: true
+  },
   issueId: {
     type: String,
     required: true,
-    ref: 'Issue'
+    index: {
+      type: 'global',
+      name: 'issueIdIndex'
+    }
   },
   author: {
     type: String,
     required: true,
-    ref: 'User'
+    index: {
+      type: 'global',
+      name: 'authorIndex'
+    }
   },
   content: {
     type: String,
-    required: true,
-    maxlength: 10000
+    required: true
   },
-  attachments: [attachmentSchema]
+  attachments: {
+    type: Array,
+    schema: [Object],
+    default: []
+  }
 }, {
-  timestamps: true
+  timestamps: true,
+  saveUnknown: false
 });
 
-// Indexes
-commentSchema.index({ issueId: 1 });
-commentSchema.index({ author: 1 });
-commentSchema.index({ createdAt: -1 });
+// Comment class
+class CommentClass extends Item {
+  id!: string;
+  issueId!: string;
+  author!: string;
+  content!: string;
+  attachments!: Attachment[];
+  createdAt!: Date;
+  updatedAt!: Date;
 
-// Compound indexes for common queries
-commentSchema.index({ issueId: 1, createdAt: -1 });
+  // Instance method to update content
+  async updateContent(content: string): Promise<CommentClass> {
+    this.content = content;
+    this.updatedAt = new Date();
+    await this.save();
+    return this;
+  }
 
-// Virtual for comment URL
-commentSchema.virtual('url').get(function() {
-  return `/issues/${this.issueId}/comments/${this._id}`;
+  // Instance method to add attachment
+  async addAttachment(attachment: Attachment): Promise<CommentClass> {
+    this.attachments.push(attachment);
+    await this.save();
+    return this;
+  }
+
+  // Instance method to remove attachment
+  async removeAttachment(attachmentId: string): Promise<CommentClass> {
+    this.attachments = this.attachments.filter(
+      (attachment: Attachment) => attachment._id !== attachmentId
+    );
+    await this.save();
+    return this;
+  }
+
+  // toJSON method
+  toJSON() {
+    const obj: any = { ...this };
+    obj._id = obj.id;
+    delete obj.id;
+    return obj;
+  }
+}
+
+// Create model
+export const Comment = dynamoose.model<CommentClass>('Comment', commentSchema, {
+  create: process.env.NODE_ENV === 'development',
+  update: process.env.NODE_ENV === 'development'
 });
-
-// Instance method to update comment
-commentSchema.methods.updateContent = function(content: string) {
-  this.content = content;
-  this.updatedAt = new Date();
-  return this.save();
-};
-
-// Instance method to add attachment
-commentSchema.methods.addAttachment = function(attachment: Attachment) {
-  this.attachments.push(attachment);
-  return this.save();
-};
-
-// Instance method to remove attachment
-commentSchema.methods.removeAttachment = function(attachmentId: string) {
-  this.attachments = this.attachments.filter(
-    (attachment: Attachment) => attachment._id.toString() !== attachmentId
-  );
-  return this.save();
-};
 
 // Static method to find comments by issue
-commentSchema.statics.findByIssue = function(issueId: string) {
-  return this.find({ issueId })
-    .populate('author', 'firstName lastName email avatar')
-    .sort({ createdAt: 1 });
+(Comment as any).findByIssue = async function(issueId: string) {
+  return await Comment.query('issueId').eq(issueId).using('issueIdIndex').exec();
 };
 
 // Static method to find comments by author
-commentSchema.statics.findByAuthor = function(authorId: string) {
-  return this.find({ author: authorId })
-    .populate('issueId', 'title key')
-    .sort({ createdAt: -1 });
+(Comment as any).findByAuthor = async function(authorId: string) {
+  return await Comment.query('author').eq(authorId).using('authorIndex').exec();
 };
 
 // Static method to get comment statistics for an issue
-commentSchema.statics.getCommentStats = async function(issueId: string) {
-  const stats = await this.aggregate([
-    { $match: { issueId } },
-    {
-      $group: {
-        _id: null,
-        totalComments: { $sum: 1 },
-        totalAttachments: { $sum: { $size: '$attachments' } },
-        authors: { $addToSet: '$author' }
-      }
-    }
-  ]);
-
-  if (stats.length === 0) {
-    return {
-      totalComments: 0,
-      totalAttachments: 0,
-      uniqueAuthors: 0
-    };
-  }
-
+(Comment as any).getCommentStats = async function(issueId: string) {
+  const comments = await Comment.query('issueId').eq(issueId).using('issueIdIndex').exec();
+  
+  const authorSet = new Set();
+  let totalAttachments = 0;
+  
+  comments.forEach((comment: CommentClass) => {
+    authorSet.add(comment.author);
+    totalAttachments += comment.attachments.length;
+  });
+  
   return {
-    totalComments: stats[0].totalComments,
-    totalAttachments: stats[0].totalAttachments,
-    uniqueAuthors: stats[0].authors.length
+    totalComments: comments.length,
+    totalAttachments,
+    uniqueAuthors: authorSet.size
   };
 };
-
-export const Comment = mongoose.model<ICommentDocument>('Comment', commentSchema) as unknown as ICommentModel;
